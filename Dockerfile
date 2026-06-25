@@ -22,12 +22,13 @@ COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
 # Copy application code
-COPY config.py .
+COPY config.py setup.py generate_fake_data.py ./
 COPY src/ src/
-COPY models/ models/
 COPY dashboard/ dashboard/
 COPY data/ data/
-COPY artifacts/ artifacts/
+
+# Create folders and run setup to generate database, models, and artifacts
+RUN mkdir -p models artifacts && python setup.py
 
 # Expose API port
 EXPOSE 8000

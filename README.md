@@ -207,7 +207,7 @@ Each test outputs: **p-value, 95% CI, effect size, statistical power, MDE**
 |---------|-------------|
 | `frequency` | Total orders placed |
 | `monetary` | Lifetime spend (BRL) |
-| `recency_days` | Days since last purchase |
+| `avg_days_between_orders` | Average number of days between orders |
 | `avg_order_value` | Mean order value |
 | `avg_review_score` | Mean review rating |
 | `tenure_days` | Days between first and last order |
@@ -267,7 +267,7 @@ curl -X POST http://localhost:8000/api/churn/predict \
     "payment_type_count": 2,
     "avg_review_score": 4.2,
     "review_count": 3,
-    "recency_days": 45,
+    "avg_days_between_orders": 45.0,
     "tenure_days": 180,
     "state_encoded": 12
   }'

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.ab_testing.experiment_engine import ABTestEngine
 from src.utils.logger import get_logger
+from src.utils.database import run_query, get_connection
 from config import MODEL_DIR, DATA_DIR, ARTIFACTS_DIR, DASHBOARD_DIR
 
 logger = get_logger(__name__)
@@ -41,17 +42,38 @@ _cache = {}
 def _load_data():
     global _cache
     if _cache: return _cache
-    files = {"customers": "olist_customers_dataset.csv", "orders": "olist_orders_dataset.csv",
-             "order_items": "olist_order_items_dataset.csv", "payments": "olist_order_payments_dataset.csv",
-             "reviews": "olist_order_reviews_dataset.csv", "products": "olist_products_dataset.csv",
-             "sellers": "olist_sellers_dataset.csv", "categories": "product_category_name_translation.csv"}
-    for key, fn in files.items():
-        p = os.path.join(str(DATA_DIR), fn)
-        if os.path.exists(p):
-            _cache[key] = pd.read_csv(p)
-        else:
-            logger.warning("Data file not found: %s", p)
+    tables = {
+        "customers": "customers", "orders": "orders",
+        "order_items": "order_items", "payments": "order_payments",
+        "reviews": "order_reviews", "products": "products",
+        "sellers": "sellers", "categories": "category_translation"
+    }
+    
+    # Check if database is ready by checking if 'orders' table exists
+    db_ready = False
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='orders'")
+        if cursor.fetchone():
+            db_ready = True
+        conn.close()
+    except Exception as e:
+        logger.warning("Database connection failed: %s", e)
+
+    if not db_ready:
+        logger.warning("Database not ready or 'orders' table missing. Using empty DataFrames.")
+        for key in tables.keys():
             _cache[key] = pd.DataFrame()
+        return _cache
+
+    for key, table_name in tables.items():
+        try:
+            _cache[key] = run_query(f"SELECT * FROM {table_name}")
+        except Exception as e:
+            logger.warning("Failed to load table %s from SQLite: %s", table_name, e)
+            _cache[key] = pd.DataFrame()
+
     if not _cache["orders"].empty:
         _cache["orders"]["order_purchase_timestamp"] = pd.to_datetime(_cache["orders"]["order_purchase_timestamp"])
         _cache["orders"]["order_delivered_customer_date"] = pd.to_datetime(_cache["orders"]["order_delivered_customer_date"], errors="coerce")

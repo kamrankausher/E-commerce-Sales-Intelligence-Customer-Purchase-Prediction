@@ -1,28 +1,28 @@
 # ─── Core ────────────────────────────────────────────────────────────────────
-pandas==2.2.2
-numpy==1.26.4
+pandas
+numpy
 
 # ─── Machine Learning ───────────────────────────────────────────────────────
-scikit-learn==1.5.0
-xgboost==2.0.3
-optuna==3.6.1
-shap==0.45.1
+scikit-learn
+xgboost
+optuna
+shap
 
 # ─── Experiment Tracking ────────────────────────────────────────────────────
-mlflow==2.13.0
+mlflow
 
 # ─── Statistical Testing ────────────────────────────────────────────────────
-scipy==1.13.1
-statsmodels==0.14.2
+scipy
+statsmodels
 
 # ─── API ─────────────────────────────────────────────────────────────────────
-fastapi==0.111.0
-uvicorn==0.29.0
-pydantic==2.7.1
+fastapi
+uvicorn
+pydantic
 
 # ─── Visualization (for SHAP plots) ─────────────────────────────────────────
-matplotlib==3.9.0
+matplotlib
 
 # ─── Testing ─────────────────────────────────────────────────────────────────
-pytest==8.2.1
-httpx==0.27.0
+pytest
+httpx

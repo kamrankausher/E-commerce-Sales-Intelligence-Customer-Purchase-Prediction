@@ -27,7 +27,7 @@ class TestChurnPredictor:
             "payment_type_count": np.random.randint(1, 4, n),
             "avg_review_score": np.random.uniform(1, 5, n).round(2),
             "review_count": np.random.randint(0, 10, n),
-            "recency_days": np.random.randint(0, 365, n),
+            "avg_days_between_orders": np.random.uniform(0, 365, n).round(1),
             "tenure_days": np.random.randint(0, 730, n),
             "state_encoded": np.random.randint(0, 27, n),
             "is_churned": np.random.binomial(1, 0.3, n),
@@ -73,7 +73,7 @@ class TestChurnPredictor:
             "payment_type_count": 2,
             "avg_review_score": 4.0,
             "review_count": 3,
-            "recency_days": 45,
+            "avg_days_between_orders": 45.0,
             "tenure_days": 180,
             "state_encoded": 12,
         }
@@ -110,6 +110,6 @@ class TestChurnPredictor:
         expected = [
             "frequency", "monetary", "avg_order_value", "avg_installments",
             "payment_type_count", "avg_review_score", "review_count",
-            "recency_days", "tenure_days", "state_encoded"
+            "avg_days_between_orders", "tenure_days", "state_encoded"
         ]
         assert set(predictor.feature_names) == set(expected)

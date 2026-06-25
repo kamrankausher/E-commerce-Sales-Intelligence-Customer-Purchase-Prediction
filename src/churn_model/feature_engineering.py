@@ -42,12 +42,21 @@ def build_features_from_csv(data_dir: str) -> pd.DataFrame:
     Returns:
         DataFrame with engineered features and churn label.
     """
-    logger.info("Building features from CSV files in %s...", data_dir)
+    logger.info("Building features — checking database first...")
 
-    customers = pd.read_csv(os.path.join(data_dir, "olist_customers_dataset.csv"))
-    orders = pd.read_csv(os.path.join(data_dir, "olist_orders_dataset.csv"))
-    payments = pd.read_csv(os.path.join(data_dir, "olist_order_payments_dataset.csv"))
-    reviews = pd.read_csv(os.path.join(data_dir, "olist_order_reviews_dataset.csv"))
+    try:
+        from src.utils.database import run_query
+        customers = run_query("SELECT * FROM customers")
+        orders = run_query("SELECT * FROM orders")
+        payments = run_query("SELECT * FROM order_payments")
+        reviews = run_query("SELECT * FROM order_reviews")
+        logger.info("Loaded features data from SQLite database")
+    except Exception as e:
+        logger.warning("Failed to load from database, falling back to CSVs in %s: %s", data_dir, e)
+        customers = pd.read_csv(os.path.join(data_dir, "olist_customers_dataset.csv"))
+        orders = pd.read_csv(os.path.join(data_dir, "olist_orders_dataset.csv"))
+        payments = pd.read_csv(os.path.join(data_dir, "olist_order_payments_dataset.csv"))
+        reviews = pd.read_csv(os.path.join(data_dir, "olist_order_reviews_dataset.csv"))
 
     orders["order_purchase_timestamp"] = pd.to_datetime(orders["order_purchase_timestamp"])
     delivered = orders[orders["order_status"] == "delivered"].copy()
