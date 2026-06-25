@@ -17,7 +17,9 @@ DASHBOARD_DIR = os.path.join(BASE_DIR, "dashboard")
 DATABASE_PATH = os.path.join(DATA_DIR, "ecommerce.db")
 
 # ─── MLflow ──────────────────────────────────────────────────────────────────
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", f"file:///{MLFLOW_DIR}")
+os.makedirs(MLFLOW_DIR, exist_ok=True)
+_mlflow_db_path = os.path.join(MLFLOW_DIR, "mlflow.db")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{_mlflow_db_path}")
 MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "churn-prediction")
 
 # ─── API ─────────────────────────────────────────────────────────────────────
