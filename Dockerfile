@@ -22,13 +22,14 @@ COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
 # Copy application code
-COPY config.py setup.py generate_fake_data.py ./
-COPY src/ src/
+COPY config.py setup.py ./
+COPY app/ app/
+COPY sql/ sql/
 COPY dashboard/ dashboard/
 COPY data/ data/
 
-# Create folders and run setup to generate database, models, and artifacts
-RUN mkdir -p models artifacts && python setup.py
+# Run setup to generate database
+RUN python setup.py
 
 # Expose API port
 EXPOSE 8000
@@ -37,5 +38,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-# Run FastAPI (using dynamic PORT for cloud providers, defaults to 8000)
-CMD ["sh", "-c", "uvicorn src.api.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Run FastAPI
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

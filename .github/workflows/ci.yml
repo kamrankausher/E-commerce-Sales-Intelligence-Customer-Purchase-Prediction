@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # ─── Job 1: Generate Data, Train Model & Test ─────────────────────────
+  # ─── Job 1: Test & Lint ────────────────────────────────────────────────
   test:
     runs-on: ubuntu-latest
 
@@ -26,11 +26,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Generate data & train model
+      - name: Generate data & initialize DB
         run: |
           python setup.py
 
-      - name: Run unit tests
+      - name: Run Pytest
         run: |
           python -m pytest tests/ -v --tb=short
 
@@ -52,9 +52,7 @@ jobs:
 
       - name: Test Docker health
         run: |
-          docker run -d --name test_api \
-            -p 8000:8000 \
-            ecommerce-intelligence:latest || true
+          docker run -d --name test_api -p 8000:8000 ecommerce-intelligence:latest
           sleep 5
-          curl -f http://localhost:8000/health || echo "API started (no model loaded)"
-          docker stop test_api || true
+          curl -f http://localhost:8000/health || exit 1
+          docker stop test_api

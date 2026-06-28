@@ -1,7 +1,7 @@
 -- ============================================================================
 -- E-commerce Growth Intelligence Platform — SQL Analytics
 -- 12 advanced queries using CTEs, window functions, and aggregations
--- Dataset: Brazilian Olist E-Commerce (PostgreSQL)
+-- Dataset: Brazilian Olist E-Commerce (SQLite)
 -- ============================================================================
 
 
@@ -12,8 +12,8 @@
 SELECT
     c.customer_state                             AS state,
     COUNT(DISTINCT o.order_id)                   AS total_orders,
-    ROUND(SUM(op.payment_value)::numeric, 2)     AS total_revenue,
-    ROUND(AVG(op.payment_value)::numeric, 2)     AS avg_order_value
+    ROUND(SUM(op.payment_value), 2)              AS total_revenue,
+    ROUND(AVG(op.payment_value), 2)              AS avg_order_value
 FROM orders o
 JOIN customers c ON o.customer_id = c.customer_id
 JOIN order_payments op ON o.order_id = op.order_id
@@ -25,37 +25,37 @@ LIMIT 10;
 
 -- ─── 2. Monthly Revenue Trend ──────────────────────────────────────────────
 -- Business Question: How does revenue trend month-over-month?
--- Techniques: DATE_TRUNC, Window Function (LAG), percentage growth
+-- Techniques: strftime for DATE_TRUNC, Window Function (LAG), percentage growth
 
 WITH monthly_revenue AS (
     SELECT
-        DATE_TRUNC('month', o.order_purchase_timestamp)::date AS month,
-        ROUND(SUM(op.payment_value)::numeric, 2)              AS revenue
+        strftime('%Y-%m', o.order_purchase_timestamp) AS month,
+        ROUND(SUM(op.payment_value), 2)               AS revenue
     FROM orders o
     JOIN order_payments op ON o.order_id = op.order_id
     WHERE o.order_status = 'delivered'
-    GROUP BY DATE_TRUNC('month', o.order_purchase_timestamp)
+    GROUP BY strftime('%Y-%m', o.order_purchase_timestamp)
 )
 SELECT
     month,
     revenue,
-    LAG(revenue) OVER (ORDER BY month)                                         AS prev_month_revenue,
+    LAG(revenue) OVER (ORDER BY month) AS prev_month_revenue,
     ROUND(
         (revenue - LAG(revenue) OVER (ORDER BY month))
-        / NULLIF(LAG(revenue) OVER (ORDER BY month), 0) * 100, 2
-    )                                                                           AS growth_pct
+        / NULLIF(LAG(revenue) OVER (ORDER BY month), 0) * 100.0, 2
+    ) AS growth_pct
 FROM monthly_revenue
 ORDER BY month;
 
 
 -- ─── 3. Customer Cohort Analysis ───────────────────────────────────────────
 -- Business Question: How does retention look across monthly acquisition cohorts?
--- Techniques: CTE, DATE_TRUNC, DENSE_RANK, cohort offset
+-- Techniques: CTE, strftime, cohort offset
 
 WITH first_purchase AS (
     SELECT
         c.customer_unique_id,
-        DATE_TRUNC('month', MIN(o.order_purchase_timestamp))::date AS cohort_month
+        strftime('%Y-%m', MIN(o.order_purchase_timestamp)) AS cohort_month
     FROM orders o
     JOIN customers c ON o.customer_id = c.customer_id
     WHERE o.order_status = 'delivered'
@@ -65,7 +65,7 @@ orders_with_cohort AS (
     SELECT
         fp.customer_unique_id,
         fp.cohort_month,
-        DATE_TRUNC('month', o.order_purchase_timestamp)::date AS order_month
+        strftime('%Y-%m', o.order_purchase_timestamp) AS order_month
     FROM first_purchase fp
     JOIN customers c ON fp.customer_unique_id = c.customer_unique_id
     JOIN orders o ON c.customer_id = o.customer_id
@@ -73,8 +73,8 @@ orders_with_cohort AS (
 )
 SELECT
     cohort_month,
-    (EXTRACT(YEAR FROM order_month) - EXTRACT(YEAR FROM cohort_month)) * 12
-        + EXTRACT(MONTH FROM order_month) - EXTRACT(MONTH FROM cohort_month) AS month_offset,
+    (CAST(strftime('%Y', order_month || '-01') AS INTEGER) - CAST(strftime('%Y', cohort_month || '-01') AS INTEGER)) * 12
+        + CAST(strftime('%m', order_month || '-01') AS INTEGER) - CAST(strftime('%m', cohort_month || '-01') AS INTEGER) AS month_offset,
     COUNT(DISTINCT customer_unique_id) AS active_customers
 FROM orders_with_cohort
 GROUP BY cohort_month, month_offset
@@ -112,8 +112,8 @@ SELECT
     s.seller_city,
     s.seller_state,
     COUNT(DISTINCT oi.order_id) AS orders_fulfilled,
-    ROUND(SUM(oi.price)::numeric, 2) AS total_revenue,
-    ROUND(AVG(oi.price)::numeric, 2) AS avg_item_price
+    ROUND(SUM(oi.price), 2) AS total_revenue,
+    ROUND(AVG(oi.price), 2) AS avg_item_price
 FROM order_items oi
 JOIN sellers s ON oi.seller_id = s.seller_id
 GROUP BY s.seller_id, s.seller_city, s.seller_state
@@ -123,34 +123,27 @@ LIMIT 10;
 
 -- ─── 6. Monthly Retention Rate ─────────────────────────────────────────────
 -- Business Question: What fraction of customers from month M return in month M+1?
--- Techniques: CTE, SELF JOIN, window function
+-- Techniques: CTE, SELF JOIN
 
 WITH monthly_customers AS (
     SELECT DISTINCT
         c.customer_unique_id,
-        DATE_TRUNC('month', o.order_purchase_timestamp)::date AS active_month
+        strftime('%Y-%m', o.order_purchase_timestamp) AS active_month
     FROM orders o
     JOIN customers c ON o.customer_id = c.customer_id
     WHERE o.order_status = 'delivered'
-),
-retention AS (
-    SELECT
-        a.active_month,
-        COUNT(DISTINCT a.customer_unique_id) AS active_count,
-        COUNT(DISTINCT b.customer_unique_id) AS retained_count
-    FROM monthly_customers a
-    LEFT JOIN monthly_customers b
-        ON a.customer_unique_id = b.customer_unique_id
-        AND b.active_month = a.active_month + INTERVAL '1 month'
-    GROUP BY a.active_month
 )
 SELECT
-    active_month,
-    active_count,
-    retained_count,
-    ROUND(retained_count * 100.0 / NULLIF(active_count, 0), 2) AS retention_rate_pct
-FROM retention
-ORDER BY active_month;
+    a.active_month,
+    COUNT(DISTINCT a.customer_unique_id) AS active_count,
+    COUNT(DISTINCT b.customer_unique_id) AS retained_count,
+    ROUND(COUNT(DISTINCT b.customer_unique_id) * 100.0 / NULLIF(COUNT(DISTINCT a.customer_unique_id), 0), 2) AS retention_rate_pct
+FROM monthly_customers a
+LEFT JOIN monthly_customers b
+    ON a.customer_unique_id = b.customer_unique_id
+    AND b.active_month = strftime('%Y-%m', date(a.active_month || '-01', '+1 month'))
+GROUP BY a.active_month
+ORDER BY a.active_month;
 
 
 -- ─── 7. Product Category Performance ───────────────────────────────────────
@@ -161,9 +154,9 @@ SELECT
     COALESCE(ct.product_category_name_english, p.product_category_name) AS category,
     COUNT(DISTINCT oi.order_id) AS total_orders,
     SUM(oi.order_item_id)       AS total_items_sold,
-    ROUND(SUM(oi.price)::numeric, 2) AS total_revenue,
-    ROUND(AVG(oi.price)::numeric, 2) AS avg_price,
-    ROUND(AVG(r.review_score)::numeric, 2) AS avg_review_score
+    ROUND(SUM(oi.price), 2) AS total_revenue,
+    ROUND(AVG(oi.price), 2) AS avg_price,
+    ROUND(AVG(r.review_score), 2) AS avg_review_score
 FROM order_items oi
 JOIN products p ON oi.product_id = p.product_id
 LEFT JOIN category_translation ct ON p.product_category_name = ct.product_category_name
@@ -175,14 +168,14 @@ LIMIT 15;
 
 -- ─── 8. Delivery Performance Analysis ──────────────────────────────────────
 -- Business Question: How does actual delivery compare to estimated delivery?
--- Techniques: DATE arithmetic, CASE, window function (PERCENTILE_CONT)
+-- Techniques: DATE arithmetic with julianday, CASE
 
 WITH delivery_stats AS (
     SELECT
         o.order_id,
         c.customer_state,
-        o.order_delivered_customer_date - o.order_purchase_timestamp AS actual_days,
-        o.order_estimated_delivery_date - o.order_purchase_timestamp AS estimated_days,
+        julianday(o.order_delivered_customer_date) - julianday(o.order_purchase_timestamp) AS actual_days,
+        julianday(o.order_estimated_delivery_date) - julianday(o.order_purchase_timestamp) AS estimated_days,
         CASE
             WHEN o.order_delivered_customer_date <= o.order_estimated_delivery_date
                 THEN 'on_time'
@@ -200,7 +193,7 @@ SELECT
     ROUND(
         SUM(CASE WHEN delivery_status = 'late' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2
     ) AS late_pct,
-    ROUND(AVG(EXTRACT(EPOCH FROM actual_days) / 86400)::numeric, 1) AS avg_delivery_days
+    ROUND(AVG(actual_days), 1) AS avg_delivery_days
 FROM delivery_stats
 GROUP BY customer_state
 ORDER BY late_pct DESC;
@@ -215,7 +208,7 @@ WITH rfm_raw AS (
         c.customer_unique_id,
         MAX(o.order_purchase_timestamp) AS last_purchase,
         COUNT(DISTINCT o.order_id)      AS frequency,
-        ROUND(SUM(op.payment_value)::numeric, 2) AS monetary
+        ROUND(SUM(op.payment_value), 2) AS monetary
     FROM orders o
     JOIN customers c ON o.customer_id = c.customer_id
     JOIN order_payments op ON o.order_id = op.order_id
@@ -256,9 +249,9 @@ ORDER BY rfm_total DESC;
 SELECT
     payment_type,
     COUNT(*) AS transaction_count,
-    ROUND(SUM(payment_value)::numeric, 2) AS total_value,
-    ROUND(AVG(payment_value)::numeric, 2) AS avg_value,
-    ROUND(AVG(payment_installments)::numeric, 1) AS avg_installments,
+    ROUND(SUM(payment_value), 2) AS total_value,
+    ROUND(AVG(payment_value), 2) AS avg_value,
+    ROUND(AVG(payment_installments), 1) AS avg_installments,
     RANK() OVER (ORDER BY SUM(payment_value) DESC) AS revenue_rank
 FROM order_payments
 GROUP BY payment_type
@@ -267,26 +260,32 @@ ORDER BY total_value DESC;
 
 -- ─── 11. Customer Lifetime Value (CLV) Distribution ────────────────────────
 -- Business Question: What does the CLV distribution look like?
--- Techniques: CTE, PERCENTILE_CONT, statistical aggregates
+-- Techniques: CTE, Window functions for median
 
 WITH clv AS (
     SELECT
         c.customer_unique_id,
-        ROUND(SUM(op.payment_value)::numeric, 2) AS lifetime_value
+        ROUND(SUM(op.payment_value), 2) AS lifetime_value
     FROM orders o
     JOIN customers c ON o.customer_id = c.customer_id
     JOIN order_payments op ON o.order_id = op.order_id
     WHERE o.order_status = 'delivered'
     GROUP BY c.customer_unique_id
+),
+clv_ranked AS (
+    SELECT 
+        lifetime_value,
+        ROW_NUMBER() OVER (ORDER BY lifetime_value) AS row_id,
+        COUNT(*) OVER () AS ct
+    FROM clv
 )
 SELECT
-    COUNT(*) AS total_customers,
-    ROUND(AVG(lifetime_value), 2) AS avg_clv,
-    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY lifetime_value)::numeric, 2) AS median_clv,
-    ROUND(MIN(lifetime_value), 2) AS min_clv,
-    ROUND(MAX(lifetime_value), 2) AS max_clv,
-    ROUND(STDDEV(lifetime_value)::numeric, 2) AS stddev_clv
-FROM clv;
+    (SELECT COUNT(*) FROM clv) AS total_customers,
+    ROUND((SELECT AVG(lifetime_value) FROM clv), 2) AS avg_clv,
+    ROUND((SELECT AVG(lifetime_value) FROM clv_ranked WHERE row_id IN (ct/2 + 1, (ct+1)/2)), 2) AS median_clv,
+    ROUND((SELECT MIN(lifetime_value) FROM clv), 2) AS min_clv,
+    ROUND((SELECT MAX(lifetime_value) FROM clv), 2) AS max_clv
+;
 
 
 -- ─── 12. Review Sentiment by Category ─────────────────────────────────────

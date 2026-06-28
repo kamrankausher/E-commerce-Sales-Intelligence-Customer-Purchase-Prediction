@@ -1,38 +1,35 @@
-"""Unit tests for the SQLite connection and query utilities."""
 import os
 import sqlite3
-import pandas as pd
 import pytest
-from src.utils.database import get_connection, run_query, execute_sql, load_df_to_table
-from config import DATABASE_PATH
+from app.database import get_connection, run_query, parse_sql_file
+from config import SQL_DIR
 
 def test_get_connection():
+    """Test that get_connection returns a valid SQLite connection."""
     conn = get_connection()
     assert isinstance(conn, sqlite3.Connection)
     conn.close()
 
-def test_execute_sql_and_run_query():
-    # Create a temp table
-    execute_sql("CREATE TABLE IF NOT EXISTS test_table (id INTEGER PRIMARY KEY, name TEXT)")
-    execute_sql("INSERT INTO test_table (name) VALUES (?)", ("Alice",))
-    
-    # Query it
-    df = run_query("SELECT * FROM test_table")
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) >= 1
-    assert df.iloc[-1]["name"] == "Alice"
-    
-    # Clean up
-    execute_sql("DROP TABLE test_table")
+def test_run_query_success():
+    """Test executing a simple SQL query."""
+    res = run_query("SELECT 1 AS test_val")
+    assert len(res) == 1
+    assert res[0]["test_val"] == 1
 
-def test_load_df_to_table():
-    df = pd.DataFrame([{"col1": 1, "col2": "A"}, {"col1": 2, "col2": "B"}])
-    load_df_to_table(df, "test_load_table", if_exists="replace")
-    
-    # Verify loaded data
-    df_loaded = run_query("SELECT * FROM test_load_table")
-    assert len(df_loaded) == 2
-    assert df_loaded.iloc[0]["col2"] == "A"
-    
-    # Clean up
-    execute_sql("DROP TABLE test_load_table")
+def test_run_query_failure():
+    """Test executing an invalid SQL query raises an exception."""
+    with pytest.raises(Exception):
+        run_query("SELECT * FROM non_existent_table_xyz123")
+
+def test_parse_sql_file_exists():
+    """Test parsing the main analytics SQL file."""
+    filepath = os.path.join(SQL_DIR, "analytics_queries.sql")
+    queries = parse_sql_file(filepath)
+    assert len(queries) == 12
+    # Ensure they look like queries
+    assert "SELECT" in queries[0].upper()
+
+def test_parse_sql_file_not_found():
+    """Test parsing a non-existent file returns empty list."""
+    queries = parse_sql_file("fake_path_does_not_exist.sql")
+    assert queries == []
