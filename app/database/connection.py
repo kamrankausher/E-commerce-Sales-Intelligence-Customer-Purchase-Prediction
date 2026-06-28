@@ -1,19 +1,29 @@
 import os
 import sqlite3
-import pandas as pd
+import logging
+from typing import List, Dict, Any, Tuple, Optional
 from config import DATABASE_PATH
 
-def get_connection():
-    """Create a new SQLite connection."""
+logger = logging.getLogger(__name__)
+
+def get_connection() -> sqlite3.Connection:
+    """Create and return a new SQLite connection."""
     os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
     conn = sqlite3.connect(DATABASE_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
-def run_query(query: str, params: tuple = None) -> list:
+def run_query(query: str, params: Optional[Tuple] = None) -> List[Dict[str, Any]]:
     """
     Execute a SQL query and return results as a list of dictionaries.
+    
+    Args:
+        query (str): The SQL query to execute.
+        params (tuple, optional): Parameters for the query. Defaults to None.
+        
+    Returns:
+        List[Dict[str, Any]]: The results of the query.
     """
     conn = get_connection()
     try:
@@ -23,18 +33,7 @@ def run_query(query: str, params: tuple = None) -> list:
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
     except Exception as e:
-        print(f"Query failed: {e}")
+        logger.error(f"Database query failed: {e}")
         raise
     finally:
         conn.close()
-
-def parse_sql_file(filepath: str) -> list:
-    """Parses a SQL file containing multiple queries separated by semicolons."""
-    if not os.path.exists(filepath):
-        return []
-    with open(filepath, 'r', encoding='utf-8') as f:
-        sql = f.read()
-    
-    # Split by semicolon and remove empty queries
-    queries = [q.strip() + ";" for q in sql.split(';') if q.strip()]
-    return queries

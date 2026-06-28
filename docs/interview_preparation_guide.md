@@ -1,25 +1,47 @@
 # Interview Preparation Guide
 
-This guide prepares you to confidently discuss the E-commerce Growth Intelligence Platform project in a technical interview.
+This guide prepares you for technical interviews based on your E-commerce Growth Intelligence Platform project. 
+
+---
 
 ## 1. FastAPI & Architecture
+
 **Q: Why did you choose FastAPI over Flask or Django?**
-**Ideal Answer:** I chose FastAPI because it is incredibly fast, natively supports asynchronous programming, and automatically generates interactive API documentation (Swagger/OpenAPI). Django would have been too heavy for a simple data-serving API, and FastAPI offers better type-hinting support than Flask out of the box using Pydantic.
-**Common Mistake:** Saying "because it's the best" without providing technical context like async support or Pydantic validation.
+- **Ideal Answer:** I chose FastAPI because it is modern, incredibly fast (built on Starlette), and natively supports asynchronous programming. It also automatically generates Swagger UI documentation, and its deep integration with Pydantic makes request/response validation seamless.
+- **Follow-up:** How does Pydantic help?
+- **Answer:** It enforces strict typing and schemas. If my API expects an integer and gets a string, Pydantic catches it immediately, returning a 422 error before it even hits my business logic.
 
-## 2. SQL & Database Design
-**Q: You mentioned writing 12 advanced SQL queries. Can you explain how you approached cohort analysis or retention logic?**
-**Ideal Answer:** For the cohort analysis, I used Common Table Expressions (CTEs). First, I created a CTE to determine the absolute first purchase month for each customer. Then, I joined that CTE against their subsequent orders to calculate the month-offset (the difference in months between the first purchase and the current order). Grouping by the cohort month and the offset allowed me to track retention degradation over time.
-**Follow-up:** How did you optimize this? (Answer: By ensuring indexes on `customer_id` and `order_purchase_timestamp` and pushing the aggregations to the DB instead of doing it in Python).
+**Q: Can you explain your folder structure?**
+- **Ideal Answer:** I structured the project following separation of concerns. `routers/` handles HTTP traffic. `services/` contains the business logic (parsing SQL). `database/` manages SQLite connections. `schemas/` handles data validation. This makes the codebase maintainable and scalable.
 
-## 3. Docker & Containerization
-**Q: Explain your Docker setup. What is a multi-stage build and why did you use it?**
-**Ideal Answer:** I used Docker to ensure the API runs consistently regardless of the host environment. I utilized a multi-stage build in my `Dockerfile` to keep the final image size small. The first stage (the 'builder') installs the system dependencies and compiles the Python packages, and the second stage only copies the compiled binaries and application code over, leaving behind the heavy build tools.
+---
 
-## 4. Pytest & CI/CD
-**Q: Your resume states you engineered 20+ Pytest cases and set up GitHub Actions. Walk me through your CI/CD pipeline.**
-**Ideal Answer:** The GitHub Actions pipeline is triggered on every push or Pull Request to the main branch. The first job checks out the code, sets up Python, installs dependencies, and runs the Pytest suite (which tests API responses, database connections, and edge cases like invalid endpoints). If the tests pass, the second job builds the Docker image and performs a health check to ensure the container starts correctly.
+## 2. SQL & Analytics
 
-## 5. System Design & Future Improvements
-**Q: How would you scale this application if the data grew to 50 million records?**
-**Ideal Answer:** Since SQLite is file-based, it would become a bottleneck under high concurrency or massive data volume. I would migrate the database to a dedicated PostgreSQL instance on AWS RDS. I would also introduce Redis for caching the most frequently requested KPI endpoints, and put the FastAPI instances behind a load balancer to handle incoming traffic horizontally.
+**Q: You mentioned using CTEs and Window Functions. Give an example from your project.**
+- **Ideal Answer:** To calculate Month-over-Month revenue growth, I first used a CTE to group total revenue by month using `strftime`. Then, in the main query, I used the `LAG()` window function to pull the previous month's revenue into the current row, allowing me to easily calculate the percentage difference.
+- **Follow-up:** What happens if the dataset gets much larger?
+- **Answer:** SQLite is fine for small/medium local datasets. If it grew massively, I'd migrate to PostgreSQL. To optimize, I ensured all heavy JOIN columns in my SQLite database had explicit indexes created during setup.
+
+---
+
+## 3. Docker & CI/CD
+
+**Q: Walk me through your Docker setup.**
+- **Ideal Answer:** I wrote a multi-stage Dockerfile. Stage 1 installs dependencies and compiles them using a builder image. Stage 2 copies only the necessary files into a lightweight runtime image (`python:3.11-slim`), reducing image size and attack surface.
+- **Follow-up:** What does your GitHub Actions pipeline do?
+- **Answer:** It automates my testing. On every push to main, it spins up an Ubuntu runner, sets up Python, installs dependencies, builds the local SQLite database, runs my 20+ Pytest suite, and finally builds the Docker image to ensure there are no build-time errors.
+
+---
+
+## 4. Testing
+
+**Q: What exactly do your 20+ Pytest tests cover?**
+- **Ideal Answer:** I didn't just test the "happy path." I wrote tests for all 12 analytical endpoints to ensure data formatting. I also wrote negative tests: querying invalid endpoints (404), using wrong HTTP methods like POST (405), and intentionally requesting out-of-bounds data to ensure my exception handling returns a safe 500 error instead of crashing the app.
+
+---
+
+## 5. Potential Pitfalls / Mistakes to Avoid in Interviews
+- **Don't** say "I used SQLite because it's the best database." Say "I used it because it's portable, serverless, and perfect for a demonstration project."
+- **Don't** act like you wrote everything manually if you used ORMs. (Note: You wrote raw SQL here, so proudly emphasize that you know *raw SQL*, which many candidates lack!).
+- **Be ready** to explain what a CTE is: It's essentially a temporary result set that you can reference within a `SELECT`, `INSERT`, `UPDATE`, or `DELETE` statement.

@@ -8,8 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from config import DATA_DIR
-from src.utils.database import get_connection, load_df_to_table
-from src.utils.logger import get_logger
+from app.database.connection import get_connection
+from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -52,7 +52,12 @@ def load_all_data():
 
         df = pd.read_csv(csv_path)
         df.columns = df.columns.str.strip().str.lower()
-        load_df_to_table(df, table_name)
+        
+        conn = get_connection()
+        try:
+            df.to_sql(table_name, conn, if_exists="replace", index=False)
+        finally:
+            conn.close()
 
     # Create indexes
     logger.info("Creating performance indexes...")
