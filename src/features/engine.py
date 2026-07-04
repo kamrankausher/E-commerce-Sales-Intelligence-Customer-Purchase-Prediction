@@ -1,3 +1,6 @@
+from src.utils.logger import get_logger
+logger = get_logger(__name__)
+
 """
 feature_engine.py — Create ML-ready features from raw e-commerce data.
 
@@ -58,10 +61,10 @@ def define_churn(df: pd.DataFrame, churn_threshold_days: int = 90) -> pd.DataFra
     churn_labels = (last_purchase < cutoff_date).astype(int)
     churn_labels.name = "churned"
 
-    print(f"  Reference date: {reference_date.date()}")
-    print(f"  Churn cutoff:   {cutoff_date.date()} ({churn_threshold_days} days before)")
-    print(f"  Churned: {churn_labels.sum()} ({churn_labels.mean()*100:.1f}%)")
-    print(f"  Active:  {(~churn_labels.astype(bool)).sum()} ({(1-churn_labels.mean())*100:.1f}%)")
+    logger.info(f"  Reference date: {reference_date.date()}")
+    logger.info(f"  Churn cutoff:   {cutoff_date.date()} ({churn_threshold_days} days before)")
+    logger.info(f"  Churned: {churn_labels.sum()} ({churn_labels.mean()*100:.1f}%)")
+    logger.info(f"  Active:  {(~churn_labels.astype(bool)).sum()} ({(1-churn_labels.mean())*100:.1f}%)")
 
     return churn_labels.reset_index()
 
@@ -163,8 +166,8 @@ def build_customer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Fill any remaining NaN (e.g., customers with no reviews)
     features = features.fillna(0)
 
-    print(f"\n  [OK] Built {len(features.columns)-1} features for {len(features):,} customers")
-    print(f"  Features: {list(features.columns[1:])}")
+    logger.info(f"  [OK] Built {len(features.columns)-1} features for {len(features):,} customers")
+    logger.info(f"  Features: {list(features.columns[1:])}")
 
     return features
 
@@ -177,20 +180,20 @@ def prepare_ml_dataset(df: pd.DataFrame, churn_threshold_days: int = 90):
         features_df: DataFrame with customer_unique_id + 12 features + churn label
     """
     print("=" * 60)
-    print("  FEATURE ENGINEERING PIPELINE")
+    logger.info("  FEATURE ENGINEERING PIPELINE")
     print("=" * 60)
 
-    print("\n[1/3] Defining churn labels...")
+    logger.info("[1/3] Defining churn labels...")
     churn = define_churn(df, churn_threshold_days)
 
-    print("\n[2/3] Building customer features...")
+    logger.info("[2/3] Building customer features...")
     features = build_customer_features(df)
 
-    print("\n[3/3] Merging features with labels...")
+    logger.info("[3/3] Merging features with labels...")
     dataset = features.merge(churn, on="customer_unique_id", how="inner")
 
-    print(f"\n  [OK] Final ML dataset: {dataset.shape[0]:,} customers × {dataset.shape[1]} columns")
-    print(f"  Churn rate: {dataset['churned'].mean()*100:.1f}%")
+    logger.info(f"  [OK] Final ML dataset: {dataset.shape[0]:,} customers × {dataset.shape[1]} columns")
+    logger.info(f"  Churn rate: {dataset['churned'].mean()*100:.1f}%")
     print("=" * 60)
 
     return dataset

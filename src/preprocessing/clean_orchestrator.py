@@ -1,3 +1,6 @@
+from src.utils.logger import get_logger
+logger = get_logger(__name__)
+
 """
 clean_orchestrator.py - Helper to merge and clean the data.
 """

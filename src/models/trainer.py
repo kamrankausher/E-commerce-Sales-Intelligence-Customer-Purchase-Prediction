@@ -1,3 +1,6 @@
+from src.utils.logger import get_logger
+logger = get_logger(__name__)
+
 """
 model_trainer.py — Train, compare, and evaluate ML models for churn prediction.
 
@@ -59,8 +62,8 @@ def split_data(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42)
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
 
-    print(f"  Train: {X_train.shape[0]:,} samples | Test: {X_test.shape[0]:,} samples")
-    print(f"  Train churn rate: {y_train.mean()*100:.1f}% | Test churn rate: {y_test.mean()*100:.1f}%")
+    logger.info(f"  Train: {X_train.shape[0]:,} samples | Test: {X_test.shape[0]:,} samples")
+    logger.info(f"  Train churn rate: {y_train.mean()*100:.1f}% | Test churn rate: {y_test.mean()*100:.1f}%")
     return X_train, X_test, y_train, y_test
 
 
@@ -137,7 +140,7 @@ def train_and_compare(X_train, X_test, y_train, y_test) -> pd.DataFrame:
     X_test_scaled = scaler.transform(X_test)
 
     for name, model in models.items():
-        print(f"\n  Training {name}...")
+        logger.info(f"  Training {name}...")
 
         # Use scaled data for Logistic Regression, raw for tree-based models
         if name == "Logistic Regression":
@@ -149,14 +152,14 @@ def train_and_compare(X_train, X_test, y_train, y_test) -> pd.DataFrame:
 
         metrics["model"] = name
         results.append(metrics)
-        print(f"    ROC-AUC: {metrics['roc_auc']:.4f} | F1: {metrics['f1_score']:.4f}")
+        logger.info(f"    ROC-AUC: {metrics['roc_auc']:.4f} | F1: {metrics['f1_score']:.4f}")
 
     comparison = pd.DataFrame(results)
     comparison = comparison[["model", "accuracy", "precision", "recall", "f1_score", "roc_auc"]]
     comparison = comparison.sort_values("roc_auc", ascending=False).reset_index(drop=True)
 
     print("\n" + "=" * 70)
-    print("  MODEL COMPARISON (sorted by ROC-AUC)")
+    logger.info("  MODEL COMPARISON (sorted by ROC-AUC)")
     print("=" * 70)
     print(comparison.to_string(index=False))
 
@@ -205,13 +208,13 @@ def tune_best_model(X_train, y_train, model_name: str = "XGBoost", n_iter: int =
     }
 
     if model_name not in param_distributions:
-        print(f"  ⚠ No tuning config for '{model_name}'. Using default params.")
+        logger.info(f"  ⚠ No tuning config for '{model_name}'. Using default params.")
         return get_models()[model_name]
 
     base_models = get_models()
     model = base_models[model_name]
 
-    print(f"\n  Tuning {model_name} with RandomizedSearchCV ({n_iter} iterations)...")
+    logger.info(f"  Tuning {model_name} with RandomizedSearchCV ({n_iter} iterations)...")
 
     search = RandomizedSearchCV(
         model,
@@ -225,8 +228,8 @@ def tune_best_model(X_train, y_train, model_name: str = "XGBoost", n_iter: int =
     )
     search.fit(X_train, y_train)
 
-    print(f"  [OK] Best ROC-AUC (CV): {search.best_score_:.4f}")
-    print(f"  [OK] Best params: {search.best_params_}")
+    logger.info(f"  [OK] Best ROC-AUC (CV): {search.best_score_:.4f}")
+    logger.info(f"  [OK] Best params: {search.best_params_}")
 
     return search.best_estimator_
 
@@ -261,7 +264,7 @@ def save_model(model, filename: str = "best_model.pkl"):
     os.makedirs(MODEL_DIR, exist_ok=True)
     filepath = os.path.join(MODEL_DIR, filename)
     joblib.dump(model, filepath)
-    print(f"  [OK] Model saved to {filepath}")
+    logger.info(f"  [OK] Model saved to {filepath}")
     return filepath
 
 
@@ -271,5 +274,5 @@ def load_model(filename: str = "best_model.pkl"):
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Model file not found: {filepath}")
     model = joblib.load(filepath)
-    print(f"  [OK] Model loaded from {filepath}")
+    logger.info(f"  [OK] Model loaded from {filepath}")
     return model

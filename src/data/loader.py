@@ -1,3 +1,6 @@
+from src.utils.logger import get_logger
+logger = get_logger(__name__)
+
 """
 data_loader.py — Load and merge all Olist CSV files into DataFrames.
 
@@ -43,9 +46,9 @@ def load_all(data_dir: str = config.RAW_DATA_DIR) -> dict:
         filepath = os.path.join(data_dir, filename)
         if os.path.exists(filepath):
             dataframes[key] = pd.read_csv(filepath)
-            print(f"  [OK] Loaded {key}: {dataframes[key].shape}")
+            logger.info(f"  [OK] Loaded {key}: {dataframes[key].shape}")
         else:
-            print(f"  [MISSING] {key} at {filepath}")
+            logger.error(f"  [MISSING] {key} at {filepath}")
             dataframes[key] = pd.DataFrame()
 
     return dataframes
@@ -95,5 +98,5 @@ def build_master_df(dfs: dict) -> pd.DataFrame:
     # Add reviews
     master = master.merge(dfs["reviews"], on="order_id", how="left")
 
-    print(f"\n  ✓ Master DataFrame: {master.shape[0]:,} rows × {master.shape[1]} columns")
+    logger.info(f"  ✓ Master DataFrame: {master.shape[0]:,} rows × {master.shape[1]} columns")
     return master
