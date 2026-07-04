@@ -1,21 +1,37 @@
 """
-Central configuration for the E-commerce Growth Intelligence Platform.
-All paths use os.path for cross-platform compatibility.
+config.py — Centralized configuration for the E-commerce Customer Analytics project.
 """
 import os
 
-# ─── Paths ───────────────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-SQL_DIR = os.path.join(BASE_DIR, "sql")
-DASHBOARD_DIR = os.path.join(BASE_DIR, "dashboard")
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# ─── Database (SQLite) ──────────────────────────────────────────────────────
-DATABASE_PATH = os.path.join(DATA_DIR, "ecommerce.db")
+# Data paths
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+RAW_DATA_DIR = os.path.join(DATA_DIR, "raw")
+PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
+OUTPUTS_DIR = os.path.join(PROJECT_ROOT, "outputs")
+REPORTS_DIR = os.path.join(PROJECT_ROOT, "reports")
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
-# ─── API ─────────────────────────────────────────────────────────────────────
-API_HOST = os.getenv("API_HOST", "0.0.0.0")
-API_PORT = int(os.getenv("API_PORT", 8000))
+# Data files
+MASTER_CLEANED_FILE = os.path.join(PROCESSED_DATA_DIR, "master_cleaned.csv")
+ML_DATASET_FILE = os.path.join(PROCESSED_DATA_DIR, "ml_dataset.csv")
+MODEL_RESULTS_FILE = os.path.join(OUTPUTS_DIR, "model_results.csv")
+BEST_MODEL_FILE = os.path.join(MODELS_DIR, "best_model.pkl")
 
-# ─── Logging ─────────────────────────────────────────────────────────────────
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# ML Parameters
+TARGET_COL = "churned"
+CHURN_THRESHOLD_DAYS = 90
+TEST_SIZE = 0.2
+RANDOM_SEED = 42
+
+FEATURE_COLS = [
+    "frequency", "monetary", "recency_days", "avg_order_value",
+    "avg_review_score", "review_count", "tenure_days",
+    "avg_days_between_orders", "avg_installments",
+    "payment_type_diversity", "late_delivery_rate", "category_diversity"
+]
+
+# Create directories if they don't exist
+for d in [RAW_DATA_DIR, PROCESSED_DATA_DIR, OUTPUTS_DIR, REPORTS_DIR, MODELS_DIR]:
+    os.makedirs(d, exist_ok=True)

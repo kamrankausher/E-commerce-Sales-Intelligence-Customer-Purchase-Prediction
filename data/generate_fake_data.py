@@ -11,12 +11,11 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+import logging
 from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from src.utils.logger import get_logger
-
-logger = get_logger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
 # ─── Brazilian States with REALISTIC e-commerce distribution ────────────────
 # SP ~35%, RJ ~15%, MG ~12% — matches real Brazilian e-commerce data
@@ -98,7 +97,7 @@ def _generate_seasonal_dates(rng, n, start_date, end_date):
 
 def generate_fake_data():
     """Generate all datasets and save as CSV files."""
-    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "raw")
     os.makedirs(data_dir, exist_ok=True)
 
     np.random.seed(42)
