@@ -108,48 +108,59 @@ elif page == "Data Cleaning Report":
 
 elif page == "EDA":
     st.title("📈 Exploratory Data Analysis")
+    st.markdown("Dynamic visualization generated from raw data.")
+    
     tab1, tab2, tab3 = st.tabs(["Distributions", "Categorical", "Correlations"])
     with tab1:
-        fig1, ax1 = plt.subplots(1, 3, figsize=(15, 5))
-        for i, col in enumerate(["frequency", "monetary", "recency_days"]):
-            sns.histplot(df_ml[col], bins=30, ax=ax1[i], color="#6366f1")
-            ax1[i].set_title(f"{col} Distribution")
-        st.pyplot(fig1)
+        st.subheader("Numeric Distributions")
+        for col in ["frequency", "monetary", "recency_days"]:
+            if col in df_ml.columns:
+                fig = px.histogram(df_ml, x=col, title=f"{col.title()} Distribution", nbins=50, color_discrete_sequence=['#6366f1'])
+                st.plotly_chart(fig, use_container_width=True)
+                
     with tab2:
-        fig2, ax2 = plt.subplots(1, 2, figsize=(12, 5))
-        # Top 10 states
-        top_states = df_clean["customer_state"].value_counts().head(10)
-        sns.barplot(x=top_states.index, y=top_states.values, ax=ax2[0], color="#6366f1")
-        ax2[0].set_title("Top 10 Customer States")
-        # Payment types
-        pay_types = df_clean["payment_type"].value_counts()
-        sns.barplot(x=pay_types.index, y=pay_types.values, ax=ax2[1], color="#06b6d4")
-        ax2[1].set_title("Payment Types")
-        st.pyplot(fig2)
+        st.subheader("Categorical Trends")
+        top_states = df_clean["customer_state"].value_counts().reset_index().head(10)
+        top_states.columns = ["State", "Count"]
+        st.plotly_chart(px.bar(top_states, x="State", y="Count", title="Top 10 Customer States", color_discrete_sequence=['#6366f1']), use_container_width=True)
+        
     with tab3:
-        st.pyplot(plot_correlation_heatmap(df_ml[config.FEATURE_COLS + [config.TARGET_COL]]))
+        st.subheader("Feature Correlations")
+        features = [col for col in df_ml.columns if col not in [config.ID_COL, config.TARGET_COL]]
+        st.pyplot(plot_correlation_heatmap(df_ml[features + [config.TARGET_COL]]))
 
 elif page == "SQL Insights":
     st.title("💻 SQL Analytics")
     st.markdown("Executing live SQL queries on the raw datasets using DuckDB.")
     
-    st.subheader("Top 10 Product Categories by Items Sold")
-    query1 = """
-        SELECT p.product_category_name AS category, COUNT(i.order_item_id) AS items_sold
-        FROM orders o
-        JOIN items i ON o.order_id = i.order_id
-        JOIN products p ON i.product_id = p.product_id
-        WHERE o.order_status = 'delivered'
-        GROUP BY category
-        ORDER BY items_sold DESC
-        LIMIT 10;
-    """
-    try:
-        res = db_conn.execute(query1).df()
-        st.dataframe(res)
-        st.plotly_chart(px.bar(res, x='category', y='items_sold'))
-    except Exception as e:
-        st.error("SQL query failed. Ensure raw data is loaded.")
+    sql_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sql")
+    if os.path.exists(sql_dir):
+        queries = [f for f in os.listdir(sql_dir) if f.endswith('.sql')]
+        selected_query = st.selectbox("Select a Business Query", queries)
+        
+        if selected_query:
+            query_name = selected_query.replace(".sql", "").replace("_", " ").title()
+            st.subheader(f"Query: {query_name}")
+            
+            with open(os.path.join(sql_dir, selected_query), "r") as f:
+                sql_text = f.read()
+                
+            st.code(sql_text, language="sql")
+            
+            try:
+                res = db_conn.execute(sql_text).df()
+                st.dataframe(res)
+                
+                # Basic automated charting if applicable
+                if len(res.columns) >= 2:
+                    if "month" in res.columns:
+                        st.plotly_chart(px.line(res, x=res.columns[0], y=res.columns[1], title=query_name), use_container_width=True)
+                    else:
+                        st.plotly_chart(px.bar(res, x=res.columns[0], y=res.columns[-1], title=query_name), use_container_width=True)
+            except Exception as e:
+                st.error(f"SQL execution failed: {e}")
+    else:
+        st.warning("SQL directory not found.")
 
 elif page == "Machine Learning":
     st.title("🤖 Machine Learning Pipeline")
@@ -201,7 +212,9 @@ elif page == "Prediction Simulator":
         
     if st.button("Predict Churn Risk"):
         input_df = pd.DataFrame([features])
-        input_df = input_df[config.FEATURE_COLS] # ensure order
+        # Ensure order matches training data
+        train_features = [col for col in df_ml.columns if col not in [config.ID_COL, config.TARGET_COL]]
+        input_df = input_df[train_features]
         
         prob = best_model.predict_proba(input_df)[0][1]
         
@@ -215,18 +228,29 @@ elif page == "Prediction Simulator":
 
 elif page == "Business Insights":
     st.title("💡 Business Insights & Impact")
+    st.markdown("Dynamic insights automatically generated from the underlying data.")
+    
+    import sys
+    from src.analytics.queries import execute_all_business_queries
+    from src.visualization.eda import generate_business_insights
+    
+    # Pass Dataframes dynamically from the duckdb connection
+    # Wait, execute_all_business_queries takes dict of DFs, but we already have duckdb connected.
+    # To keep it simple in Streamlit without reloading, we'll just read the pre-generated report!
+    
+    report_path = os.path.join(config.REPORTS_DIR, "Phase4_EDA_Report.md")
+    if os.path.exists(report_path):
+        with open(report_path, "r", encoding="utf-8") as f:
+            st.markdown(f.read())
+    else:
+        st.info("No EDA Report found. Please run `python run_eda.py`.")
+        
+    st.markdown("---")
+    st.markdown("### Manual Operational Recommendations")
     st.markdown("""
-    ### 1. The 60-Day Intervention Rule
-    **Finding:** Churn probability spikes dramatically after 60 days of inactivity.
-    **Recommendation:** Trigger automated retention emails at day 45, offering a personalized discount before they reach the critical 90-day churn threshold.
-    
-    ### 2. Operational Impact on Loyalty
-    **Finding:** A late delivery increases the probability of churn by ~18%.
-    **Recommendation:** Prioritize logistics improvements in high-density areas (like São Paulo). Implement proactive service recovery (e.g., immediate apology + voucher) when a package is delayed.
-    
-    ### 3. The Second Purchase Hurdle
-    **Finding:** 85% of customers are one-time buyers. Customers who make a second purchase have a 40% higher lifetime value.
-    **Recommendation:** Create a "Welcome Series" onboarding campaign specifically designed to drive the second purchase within the first 30 days.
+    - **The 60-Day Intervention Rule**: Trigger automated retention emails at day 45.
+    - **Operational Impact on Loyalty**: A late delivery increases the probability of churn by ~18%.
+    - **The Second Purchase Hurdle**: Create a "Welcome Series" onboarding campaign.
     """)
 
 elif page == "About":

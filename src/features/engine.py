@@ -192,6 +192,10 @@ def prepare_ml_dataset(df: pd.DataFrame, churn_threshold_days: int = 90):
     logger.info("[3/3] Merging features with labels...")
     dataset = features.merge(churn, on="customer_unique_id", how="inner")
 
+    # CRITICAL: Drop 'recency_days' because it perfectly correlates with the target (churned = recency_days > 90)
+    # This prevents extreme data leakage in Phase 5+
+    dataset = dataset.drop(columns=["recency_days"], errors="ignore")
+
     logger.info(f"  [OK] Final ML dataset: {dataset.shape[0]:,} customers × {dataset.shape[1]} columns")
     logger.info(f"  Churn rate: {dataset['churned'].mean()*100:.1f}%")
     print("=" * 60)

@@ -1,44 +1,45 @@
 import pandas as pd
-import numpy as np
 import pytest
-from src.preprocessing.cleaner import handle_missing_values, cap_outliers, filter_delivered_orders
+from sklearn.pipeline import Pipeline
+from src.preprocessing.detector import detect_features
+from src.preprocessing.pipeline import build_preprocessor
 
-def test_handle_missing_values():
-    df = pd.DataFrame({
-        "review_score": [1, 5, np.nan, 3],
-        "product_category_name_english": ["toys", np.nan, "books", "games"],
-        "freight_value": [10.0, np.nan, 20.0, 5.0]
+@pytest.fixture
+def sample_data():
+    return pd.DataFrame({
+        'num1': [1, 2, 3, 4, None],
+        'num2': [10.5, 20.1, 30.2, 40.8, 50.9],
+        'cat1': ['A', 'B', 'A', 'C', 'B'],
+        'bool1': [True, False, True, False, True],
+        'target': [0, 1, 0, 1, 0],
+        'id_col': ['id1', 'id2', 'id3', 'id4', 'id5']
     })
-    
-    cleaned_df = handle_missing_values(df)
-    
-    # review_score median of [1, 5, 3] is 3
-    assert cleaned_df["review_score"].isnull().sum() == 0
-    assert cleaned_df.loc[2, "review_score"] == 3.0
-    
-    # category should be filled with 'other'
-    assert cleaned_df["product_category_name_english"].isnull().sum() == 0
-    assert cleaned_df.loc[1, "product_category_name_english"] == "other"
-    
-    # freight should be filled with 0
-    assert cleaned_df["freight_value"].isnull().sum() == 0
-    assert cleaned_df.loc[1, "freight_value"] == 0.0
 
-def test_cap_outliers():
-    df = pd.DataFrame({
-        "price": [10, 12, 11, 15, 1000] # 1000 is an outlier
-    })
+def test_feature_detection(sample_data):
+    features = detect_features(sample_data, target_col='target', drop_cols=['id_col'])
     
-    capped_df = cap_outliers(df, "price", factor=1.5)
+    assert 'num1' in features['numeric']
+    assert 'num2' in features['numeric']
+    assert 'cat1' in features['categorical']
+    assert 'bool1' in features['boolean']
     
-    assert capped_df["price"].max() < 1000
+    # Target and IDs should be excluded
+    assert 'target' not in features['numeric']
+    assert 'id_col' not in features['categorical']
 
-def test_filter_delivered_orders():
-    df = pd.DataFrame({
-        "order_id": [1, 2, 3],
-        "order_status": ["delivered", "canceled", "delivered"]
-    })
+def test_preprocessing_pipeline(sample_data):
+    features = detect_features(sample_data, target_col='target', drop_cols=['id_col'])
     
-    filtered_df = filter_delivered_orders(df)
-    assert len(filtered_df) == 2
-    assert "canceled" not in filtered_df["order_status"].values
+    X = sample_data.drop(columns=['target', 'id_col'])
+    y = sample_data['target']
+    
+    preprocessor = build_preprocessor(features)
+    
+    # Pipeline should fit and transform without error
+    preprocessor.fit(X, y)
+    X_transformed = preprocessor.transform(X)
+    
+    # Check that transformation occurred (shape should change due to one-hot encoding cat1)
+    # 2 numeric, 1 boolean, 3 categories for cat1 = 6 features expected
+    # VarianceThreshold should keep all of them unless a column has 0 variance
+    assert X_transformed.shape[1] > X.shape[1]

@@ -42,22 +42,19 @@ from sklearn.metrics import (
 )
 import config
 
-FEATURE_COLS = config.FEATURE_COLS
 TARGET_COL = config.TARGET_COL
 MODEL_DIR = config.MODELS_DIR
 
 
 def split_data(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42):
     """
-    Split data into train and test sets with stratification.
-
-    Why stratified: Churn is typically imbalanced (e.g., 70% churned, 30% active).
-    Stratification ensures both train and test sets maintain the same class ratio,
-    giving reliable evaluation metrics.
+    Split the dataset into training and testing sets.
     """
-    X = df[FEATURE_COLS]
-    y = df[TARGET_COL]
-
+    logger.info("  Splitting data into train and test sets...")
+    
+    X = df.drop(columns=[config.TARGET_COL, config.ID_COL], errors='ignore')
+    y = df[config.TARGET_COL]
+    
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
@@ -166,7 +163,7 @@ def train_and_compare(X_train, X_test, y_train, y_test) -> pd.DataFrame:
     return comparison
 
 
-def tune_best_model(X_train, y_train, model_name: str = "XGBoost", n_iter: int = 30):
+def tune_best_model(X_train, y_train, preprocessor, model_name: str = "XGBoost", n_iter: int = 30):
     """
     Hyperparameter tuning with RandomizedSearchCV.
 
@@ -180,44 +177,51 @@ def tune_best_model(X_train, y_train, model_name: str = "XGBoost", n_iter: int =
     - But harder to explain in a fresher interview
     - RandomizedSearchCV is well-known, in scikit-learn, easy to discuss
     """
+    from sklearn.pipeline import Pipeline
+    
     param_distributions = {
         "XGBoost": {
-            "n_estimators": [50, 100, 200, 300],
-            "max_depth": [3, 4, 5, 6, 8, 10],
-            "learning_rate": [0.01, 0.05, 0.1, 0.2],
-            "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
-            "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
-            "min_child_weight": [1, 3, 5, 7],
-            "gamma": [0, 0.1, 0.2, 0.3],
+            "classifier__n_estimators": [50, 100, 200, 300],
+            "classifier__max_depth": [3, 4, 5, 6, 8, 10],
+            "classifier__learning_rate": [0.01, 0.05, 0.1, 0.2],
+            "classifier__subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+            "classifier__colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
+            "classifier__min_child_weight": [1, 3, 5, 7],
+            "classifier__gamma": [0, 0.1, 0.2, 0.3],
         },
         "LightGBM": {
-            "n_estimators": [50, 100, 200, 300],
-            "max_depth": [3, 5, 8, 10, -1],
-            "learning_rate": [0.01, 0.05, 0.1, 0.2],
-            "num_leaves": [15, 31, 63, 127],
-            "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
-            "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
+            "classifier__n_estimators": [50, 100, 200, 300],
+            "classifier__max_depth": [3, 5, 8, 10, -1],
+            "classifier__learning_rate": [0.01, 0.05, 0.1, 0.2],
+            "classifier__num_leaves": [15, 31, 63, 127],
+            "classifier__subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+            "classifier__colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
         },
         "Random Forest": {
-            "n_estimators": [50, 100, 200, 300],
-            "max_depth": [5, 8, 10, 15, None],
-            "min_samples_split": [2, 5, 10],
-            "min_samples_leaf": [1, 2, 4],
-            "max_features": ["sqrt", "log2"],
+            "classifier__n_estimators": [50, 100, 200, 300],
+            "classifier__max_depth": [5, 8, 10, 15, None],
+            "classifier__min_samples_split": [2, 5, 10],
+            "classifier__min_samples_leaf": [1, 2, 4],
+            "classifier__max_features": ["sqrt", "log2"],
         },
     }
 
     if model_name not in param_distributions:
         logger.info(f"  ⚠ No tuning config for '{model_name}'. Using default params.")
-        return get_models()[model_name]
+        return Pipeline([('preprocessor', preprocessor), ('classifier', get_models()[model_name])])
 
     base_models = get_models()
     model = base_models[model_name]
+    
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('classifier', model)
+    ])
 
     logger.info(f"  Tuning {model_name} with RandomizedSearchCV ({n_iter} iterations)...")
 
     search = RandomizedSearchCV(
-        model,
+        pipeline,
         param_distributions[model_name],
         n_iter=n_iter,
         cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=42),

@@ -20,17 +20,13 @@ MODEL_RESULTS_FILE = os.path.join(OUTPUTS_DIR, "model_results.csv")
 BEST_MODEL_FILE = os.path.join(MODELS_DIR, "best_model.pkl")
 
 # ML Parameters
+ID_COL = "customer_unique_id"
 TARGET_COL = "churned"
 CHURN_THRESHOLD_DAYS = 90
 TEST_SIZE = 0.2
 RANDOM_SEED = 42
 
-FEATURE_COLS = [
-    "frequency", "monetary", "avg_order_value",
-    "avg_review_score", "review_count", "tenure_days",
-    "avg_days_between_orders", "avg_installments",
-    "payment_type_diversity", "late_delivery_rate", "category_diversity"
-]
+# FEATURE_COLS is no longer hardcoded. It is dynamically detected in Phase 5.
 
 # Create directories if they don't exist
 for d in [RAW_DATA_DIR, PROCESSED_DATA_DIR, OUTPUTS_DIR, REPORTS_DIR, MODELS_DIR]:
