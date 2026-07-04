@@ -14,12 +14,12 @@ import plotly.express as px
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
-from src.visualization.plots import plot_numeric_distributions, plot_categorical_distributions, plot_correlation_matrix
+from src.visualization.plots import plot_correlation_heatmap
 
 st.set_page_config(page_title="E-commerce Analytics", layout="wide", page_icon="🛒")
 
 # ─── Load Data ─────────────────────────────────────────────────────────────
-@st.cache_data
+@st.cache_resource
 def load_data():
     master_clean = pd.read_csv(config.MASTER_CLEANED_FILE)
     ml_data = pd.read_csv(config.ML_DATASET_FILE)
@@ -110,11 +110,24 @@ elif page == "EDA":
     st.title("📈 Exploratory Data Analysis")
     tab1, tab2, tab3 = st.tabs(["Distributions", "Categorical", "Correlations"])
     with tab1:
-        st.pyplot(plot_numeric_distributions(df_ml, ["frequency", "monetary", "recency_days"]))
+        fig1, ax1 = plt.subplots(1, 3, figsize=(15, 5))
+        for i, col in enumerate(["frequency", "monetary", "recency_days"]):
+            sns.histplot(df_ml[col], bins=30, ax=ax1[i], color="#6366f1")
+            ax1[i].set_title(f"{col} Distribution")
+        st.pyplot(fig1)
     with tab2:
-        st.pyplot(plot_categorical_distributions(df_clean, ["customer_state", "payment_type"]))
+        fig2, ax2 = plt.subplots(1, 2, figsize=(12, 5))
+        # Top 10 states
+        top_states = df_clean["customer_state"].value_counts().head(10)
+        sns.barplot(x=top_states.index, y=top_states.values, ax=ax2[0], color="#6366f1")
+        ax2[0].set_title("Top 10 Customer States")
+        # Payment types
+        pay_types = df_clean["payment_type"].value_counts()
+        sns.barplot(x=pay_types.index, y=pay_types.values, ax=ax2[1], color="#06b6d4")
+        ax2[1].set_title("Payment Types")
+        st.pyplot(fig2)
     with tab3:
-        st.pyplot(plot_correlation_matrix(df_ml, config.FEATURE_COLS + [config.TARGET_COL]))
+        st.pyplot(plot_correlation_heatmap(df_ml[config.FEATURE_COLS + [config.TARGET_COL]]))
 
 elif page == "SQL Insights":
     st.title("💻 SQL Analytics")
@@ -170,7 +183,6 @@ elif page == "Prediction Simulator":
     features = {}
     
     with col1:
-        features["recency_days"] = st.slider("Recency (Days since last order)", 1, 365, 30)
         features["frequency"] = st.slider("Frequency (Total orders)", 1, 50, 2)
         features["monetary"] = st.slider("Monetary (Total spend R$)", 10.0, 5000.0, 150.0)
         features["avg_order_value"] = features["monetary"] / features["frequency"]

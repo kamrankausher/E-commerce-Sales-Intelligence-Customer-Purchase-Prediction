@@ -80,7 +80,7 @@ def get_models() -> dict:
             max_iter=1000, random_state=42, class_weight="balanced"
         ),
         "Decision Tree": DecisionTreeClassifier(
-            max_depth=8, random_state=42, class_weight="balanced"
+            max_depth=5, random_state=42, class_weight="balanced"
         ),
         "Random Forest": RandomForestClassifier(
             n_estimators=100, max_depth=10, random_state=42,

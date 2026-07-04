@@ -92,9 +92,15 @@ def main():
         
         save_metrics(metrics)
         
-    logger.info(f"Best model found: {best_model_name} with AUC = {best_auc:.4f}")
+    logger.info(f"Best base model found: {best_model_name} with AUC = {best_auc:.4f}")
     
-    # 7. Save Best Model
+    # 7. Hyperparameter Tuning
+    if best_model_name in ["XGBoost", "LightGBM", "Random Forest"]:
+        logger.info(f"Tuning {best_model_name} with RandomizedSearchCV...")
+        from src.models.trainer import tune_best_model
+        best_model = tune_best_model(X_train, y_train, model_name=best_model_name, n_iter=10)
+    
+    # 8. Save Best Model
     save_model(best_model, filename="best_model.pkl")
     logger.info(f"Saved best model to {config.BEST_MODEL_FILE}")
     

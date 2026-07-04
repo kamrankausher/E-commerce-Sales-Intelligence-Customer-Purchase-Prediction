@@ -26,7 +26,7 @@ TEST_SIZE = 0.2
 RANDOM_SEED = 42
 
 FEATURE_COLS = [
-    "frequency", "monetary", "recency_days", "avg_order_value",
+    "frequency", "monetary", "avg_order_value",
     "avg_review_score", "review_count", "tenure_days",
     "avg_days_between_orders", "avg_installments",
     "payment_type_diversity", "late_delivery_rate", "category_diversity"
