@@ -1,6 +1,6 @@
 """
 Streamlit Machine Learning Workbench
-Premium UI, Step-by-Step Workflow, Auto Target Validation
+Premium UI, Step-by-Step Workflow, Auto Target Validation, Explainability
 """
 import streamlit as st
 import pandas as pd
@@ -23,6 +23,7 @@ from src.models.task_detector import detect_task_type
 from src.models.trainer import split_data, train_and_compare, tune_best_model
 from src.evaluation.metrics import generate_leaderboard
 from src.evaluation.explainability import get_feature_importance, get_permutation_importance, error_analysis, generate_plain_english_explanation
+from src.evaluation.charts import plot_confusion_matrix, plot_roc_curve, plot_precision_recall_curve
 
 # --- Page Config & Custom CSS ---
 st.set_page_config(page_title="Premium ML Workbench", layout="wide", page_icon="📈")
@@ -30,28 +31,43 @@ st.set_page_config(page_title="Premium ML Workbench", layout="wide", page_icon="
 def inject_custom_css():
     st.markdown("""
     <style>
-    /* Premium UI overrides */
+    /* Premium Light/Dark Adaptive UI */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    :root {
+        --bg-color: #F8FAFC;
+        --sidebar-bg: #0F172A;
+        --text-color: #1E293B;
+        --card-bg: white;
+        --card-border: #E2E8F0;
+        --metric-title: #64748B;
+        --primary-btn: #3B82F6;
+        --primary-hover: #2563EB;
+    }
+    
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bg-color: #0F172A;
+            --sidebar-bg: #1E293B;
+            --text-color: #F8FAFC;
+            --card-bg: #1E293B;
+            --card-border: #334155;
+            --metric-title: #94A3B8;
+        }
+    }
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
     }
     
-    .stApp {
-        background-color: #F8FAFC;
-    }
+    .stApp { background-color: var(--bg-color); }
+    .css-1d391kg, .stSidebar { background-color: var(--sidebar-bg) !important; }
     
-    .css-1d391kg {  /* Sidebar */
-        background-color: #0F172A;
-    }
-    
-    h1, h2, h3 {
-        color: #1E293B;
-        font-weight: 700 !important;
-    }
+    h1, h2, h3 { color: var(--text-color); font-weight: 700 !important; }
+    p, span, div { color: var(--text-color); }
     
     .stButton>button {
-        background-color: #3B82F6;
+        background-color: var(--primary-btn);
         color: white;
         border-radius: 8px;
         border: none;
@@ -59,23 +75,23 @@ def inject_custom_css():
         font-weight: 600;
         transition: all 0.2s;
     }
-    
     .stButton>button:hover {
-        background-color: #2563EB;
+        background-color: var(--primary-hover);
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     }
     
     .metric-card {
-        background-color: white;
+        background-color: var(--card-bg);
         border-radius: 12px;
         padding: 20px;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        border: 1px solid #E2E8F0;
+        border: 1px solid var(--card-border);
         text-align: center;
+        margin-bottom: 1rem;
     }
     
     .metric-title {
-        color: #64748B;
+        color: var(--metric-title);
         font-size: 14px;
         font-weight: 600;
         text-transform: uppercase;
@@ -83,7 +99,7 @@ def inject_custom_css():
     }
     
     .metric-value {
-        color: #0F172A;
+        color: var(--text-color);
         font-size: 28px;
         font-weight: 700;
         margin-top: 8px;
@@ -118,15 +134,15 @@ def init_state():
 
 # --- Navigation ---
 STEPS = {
-    1: "① Upload Dataset",
-    2: "② Validate Dataset",
-    3: "③ Explore Data",
-    4: "④ SQL Analytics",
-    5: "⑤ Train Models",
-    6: "⑥ Compare Models",
-    7: "⑦ Explainability",
-    8: "⑧ Predictions",
-    9: "⑨ Reports"
+    1: "Upload Dataset",
+    2: "Validate Dataset",
+    3: "Explore Data",
+    4: "SQL Analytics",
+    5: "Train Models",
+    6: "Compare Models",
+    7: "Explainability",
+    8: "Predictions",
+    9: "Reports"
 }
 
 def next_step():
@@ -134,6 +150,12 @@ def next_step():
 
 def prev_step():
     st.session_state["current_step"] = max(st.session_state["current_step"] - 1, 1)
+
+def show_onboarding(title, purpose, expected, tips):
+    with st.expander("📖 What is this step?", expanded=False):
+        st.markdown(f"**Purpose:** {purpose}")
+        st.markdown(f"**Expected Output:** {expected}")
+        st.info(f"💡 **Tip:** {tips}")
 
 # --- Caching ---
 @st.cache_data(show_spinner=False)
@@ -146,11 +168,11 @@ def load_data(file_obj, is_csv=True):
 def render_metric_cards(df):
     cols = st.columns(5)
     metrics = [
-        ("Rows", df.shape[0]),
+        ("Rows", f"{df.shape[0]:,}"),
         ("Columns", df.shape[1]),
-        ("Missing Cells", df.isna().sum().sum()),
-        ("Duplicates", df.duplicated().sum()),
-        ("Memory (MB)", round(df.memory_usage(deep=True).sum() / 1024**2, 2))
+        ("Missing Cells", f"{df.isna().sum().sum():,}"),
+        ("Duplicates", f"{df.duplicated().sum():,}"),
+        ("Memory (MB)", f"{df.memory_usage(deep=True).sum() / 1024**2:.2f}")
     ]
     for col, (title, value) in zip(cols, metrics):
         col.markdown(f"""
@@ -164,7 +186,14 @@ def render_metric_cards(df):
 # --- Step 1: Upload ---
 def step_upload():
     st.title("📂 Step 1: Upload Dataset")
-    st.markdown("Welcome to the Premium ML Workbench. Upload your tabular dataset to begin.")
+    show_onboarding(
+        "Upload Dataset", 
+        "Ingest your raw data into the ML Workbench.", 
+        "A preview of your dataset in table format.", 
+        "Make sure your dataset contains a column you wish to predict (the Target)."
+    )
+    
+    st.markdown("Upload your tabular dataset to begin. Supported formats: `.csv`, `.xlsx`")
     
     uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=['csv', 'xlsx'])
     
@@ -178,7 +207,6 @@ def step_upload():
             if st.session_state["db_conn"] is None:
                 st.session_state["db_conn"] = duckdb.connect(database=':memory:')
             st.session_state["db_conn"].register("dataset", st.session_state["raw_df"])
-            st.success("Sample dataset loaded successfully!")
             next_step()
             st.rerun()
         except Exception as e:
@@ -202,7 +230,6 @@ def step_upload():
                 st.session_state["db_conn"] = duckdb.connect(database=':memory:')
             st.session_state["db_conn"].register("dataset", st.session_state["raw_df"])
             
-            st.success("Dataset loaded successfully!")
             next_step()
             st.rerun()
             
@@ -212,13 +239,18 @@ def step_upload():
 # --- Step 2: Validate Dataset ---
 def step_validate():
     st.title("🛡️ Step 2: Target Validation & Readiness")
+    show_onboarding(
+        "Validate Dataset", 
+        "Automatically analyze your dataset to detect Identifiers (like User IDs) and recommend the best prediction Target.", 
+        "A readiness checklist confirming your data is leak-free.", 
+        "Identifiers must be dropped so the model doesn't 'cheat' by memorizing IDs."
+    )
     df = st.session_state["raw_df"]
     
     render_metric_cards(df)
     
-    st.subheader("Automated Target Detection")
+    st.subheader("Automated Target & Leakage Detection")
     
-    # Auto-detect IDs
     detected_ids = []
     potential_targets = []
     
@@ -238,7 +270,6 @@ def step_validate():
         st.warning(f"**Identifiers Detected & Excluded:** {', '.join(detected_ids)}")
         st.caption("These columns have been automatically removed from target selection to prevent data leakage.")
         
-    # Recommend Target (look for binary or boolean first)
     recommended_target = None
     reason = ""
     for col in potential_targets:
@@ -252,7 +283,6 @@ def step_validate():
         reason = "Numeric/Categorical column found at the end of the dataset."
         
     st.info(f"**Recommended Target:** `{recommended_target}`\n\n**Reason:** {reason}")
-    
     selected_target = st.selectbox("Confirm Target Column:", potential_targets, index=potential_targets.index(recommended_target) if recommended_target in potential_targets else 0)
     
     st.markdown("### Readiness Report")
@@ -261,18 +291,22 @@ def step_validate():
     st.markdown(f"- [x] Identifier Columns Removed ({len(detected_ids)} removed)")
     st.markdown("- [x] Leakage Check Passed")
     
-    if st.button("Confirm Validation & Proceed"):
+    if st.button("Confirm Validation & Proceed", type="primary"):
         st.session_state["target_col"] = selected_target
         next_step()
         st.rerun()
 
 # --- Step 3: Explore Data ---
 def step_explore():
-    st.title("📊 Step 3: Exploratory Data Analysis")
+    st.title("📊 Step 3: Smart Exploratory Data Analysis")
+    show_onboarding(
+        "Explore Data", 
+        "Visualize the distribution of your features and extract business meaning.", 
+        "Interactive histograms and bar charts with dynamically calculated insights.", 
+        "Look for highly imbalanced classes or massive outliers."
+    )
     df = st.session_state["clean_df"]
     target = st.session_state.get("target_col")
-    
-    st.markdown("Explore your features to understand distributions and potential business impact.")
     
     num_cols = df.select_dtypes(include=np.number).columns.tolist()
     cat_cols = df.select_dtypes(exclude=np.number).columns.tolist()
@@ -285,37 +319,53 @@ def step_explore():
             fig = px.histogram(df, x=selected_num, color=target if target in df.columns else None, nbins=50, title=f"Distribution of {selected_num}")
             st.plotly_chart(fig, use_container_width=True)
             
-            st.success(f"**Observation:** `{selected_num}` shows a distribution across {df[selected_num].min()} to {df[selected_num].max()}.\n\n**Business Meaning:** Identifies the core range of this metric for your user base.\n\n**Recommendation:** Check for outliers at the tail ends of the distribution before training.")
+            mean_val = df[selected_num].mean()
+            max_val = df[selected_num].max()
+            st.success(f"**Observation:** The average value for `{selected_num}` is **{mean_val:.2f}**, peaking at **{max_val:.2f}**.\n\n**Business Meaning:** Identifies the core range of this metric for your user base.\n\n**Recommendation:** Check for outliers at the tail ends of the distribution before training.")
             
     with tab2:
         if cat_cols:
             selected_cat = st.selectbox("Select Categorical Feature", cat_cols, key="cat")
             val_counts = df[selected_cat].value_counts().reset_index()
             val_counts.columns = [selected_cat, 'Count']
+            
+            majority_cat = val_counts.iloc[0][selected_cat]
+            majority_pct = (val_counts.iloc[0]['Count'] / len(df)) * 100
+            
             fig = px.bar(val_counts.head(20), x=selected_cat, y='Count', title=f"Top Categories in {selected_cat}")
             st.plotly_chart(fig, use_container_width=True)
             
-            st.success(f"**Observation:** `{val_counts.iloc[0][selected_cat]}` is the dominant category.\n\n**Business Meaning:** This segment represents your largest demographic or cohort.\n\n**Recommendation:** Ensure sufficient representation of minority classes to prevent model bias.")
+            st.success(f"**Observation:** `{majority_cat}` is the dominant category, making up **{majority_pct:.1f}%** of the data.\n\n**Business Meaning:** This segment represents your largest demographic or cohort.\n\n**Recommendation:** Ensure sufficient representation of minority classes to prevent model bias.")
 
     st.write("")
-    if st.button("Continue to SQL Analytics"):
+    if st.button("Continue to SQL Analytics", type="primary"):
         next_step()
         st.rerun()
 
 # --- Step 4: SQL Analytics ---
 def step_sql():
     st.title("💻 Step 4: SQL Analytics")
-    st.markdown("Run live SQL queries against your dataset using **DuckDB**.")
+    show_onboarding(
+        "SQL Analytics", 
+        "Run fast analytical queries directly on your dataset using DuckDB.", 
+        "A data table containing the results of your query.", 
+        "Use the quick templates to instantly analyze target class balance without writing code."
+    )
     
     templates = {
         "Preview Data": "SELECT * FROM dataset LIMIT 10;",
         "Target Class Balance": f"SELECT {st.session_state.get('target_col', 'target')}, COUNT(*) as count FROM dataset GROUP BY 1 ORDER BY 2 DESC;",
-        "Null Value Check": "SELECT count(*) - count(id_col) as nulls FROM dataset;" # Generic example
+        "Overall Summary": "SELECT count(*) as total_rows FROM dataset;"
     }
     
-    selected_template = st.selectbox("Quick Templates", list(templates.keys()))
-    query = st.text_area("SQL Query", value=templates[selected_template], height=120)
+    selected_template = st.selectbox("Quick Analysis Templates", list(templates.keys()))
     
+    with st.expander("Advanced SQL Editor", expanded=False):
+        query = st.text_area("Write custom SQL (table is named 'dataset')", value=templates[selected_template], height=120)
+    
+    if "Advanced SQL Editor" not in st.session_state:
+        query = templates[selected_template]
+        
     if st.button("Execute Query"):
         try:
             conn = st.session_state["db_conn"]
@@ -326,19 +376,26 @@ def step_sql():
             st.error(f"SQL Error: {e}")
             
     st.write("")
-    if st.button("Continue to Model Training"):
+    if st.button("Continue to Model Training", type="primary"):
         next_step()
         st.rerun()
 
 # --- Step 5: Train Models ---
 def step_train():
     st.title("🤖 Step 5: Model Training")
+    show_onboarding(
+        "Train Models", 
+        "Automatically preprocess data, detect task type, and train multiple ML algorithms concurrently.", 
+        "A trained pipeline ready for evaluation.", 
+        "This step automatically handles missing values, one-hot encoding, and hyperparameter tuning."
+    )
     df = st.session_state["clean_df"]
     target = st.session_state["target_col"]
     id_cols = st.session_state["ignored_cols"]
     
     st.markdown(f"**Target Variable:** `{target}`")
     st.markdown(f"**Ignored Identifiers:** `{id_cols}`")
+    st.markdown(f"**Features Available:** {df.shape[1] - 1 - len(id_cols)}")
     
     if st.button("Initialize & Train ML Pipeline", type="primary"):
         start_time = time.time()
@@ -354,11 +411,11 @@ def step_train():
             st.session_state["task_type"] = task_type
             
             if task_type == "Classification" and y.nunique() > 50:
-                st.error("Target has too many unique values for Classification. Please redefine your target.")
+                st.error("Target has too many unique values for Classification. Please redefine your target in Step 2.")
                 return
                 
             # 2. Preprocess & Split
-            status_text.text("Preprocessing Data and Splitting...")
+            status_text.text("Preprocessing Data and Splitting (80/20)...")
             progress_bar.progress(30)
             df_ml = df.dropna(subset=[target]).copy()
             X = df_ml.drop(columns=[target] + id_cols, errors='ignore')
@@ -420,6 +477,12 @@ def step_train():
 # --- Step 6: Compare Models ---
 def step_compare():
     st.title("🏆 Step 6: Model Comparison")
+    show_onboarding(
+        "Compare Models", 
+        "Review the performance of all trained models on the test set.", 
+        "A leaderboard and metric comparison chart.", 
+        "For imbalanced classification, look at F1 Score or ROC AUC instead of plain Accuracy."
+    )
     comp_df = st.session_state["comparison_df"]
     lb = st.session_state["leaderboard"]
     
@@ -430,68 +493,117 @@ def step_compare():
     c3.markdown(f"<div class='metric-card'><div class='metric-title'>Most Interpretable</div><div class='metric-value' style='color:#f59e0b'>{lb['most_interpretable']}</div></div>", unsafe_allow_html=True)
     
     st.write("")
-    st.dataframe(comp_df.style.highlight_max(axis=0, subset=['accuracy', 'roc_auc'] if st.session_state['task_type']=='Classification' else []), use_container_width=True)
+    st.dataframe(comp_df.style.highlight_max(axis=0, subset=['accuracy', 'roc_auc', 'f1_score'] if st.session_state['task_type']=='Classification' else []), use_container_width=True)
     
     metric = "roc_auc" if st.session_state["task_type"] == "Classification" else "rmse"
-    fig = px.bar(comp_df, x="model", y=metric, color="model", title=f"Model Comparison ({metric.upper()})")
-    st.plotly_chart(fig, use_container_width=True)
+    if metric in comp_df.columns:
+        fig = px.bar(comp_df, x="model", y=metric, color="model", title=f"Model Comparison ({metric.upper()})")
+        st.plotly_chart(fig, use_container_width=True)
     
-    if st.button("Continue to Explainability"):
+    if st.button("Continue to Explainability", type="primary"):
         next_step()
         st.rerun()
 
 # --- Step 7: Explainability ---
 def step_explain():
     st.title("🧠 Step 7: Explainability (XAI)")
+    show_onboarding(
+        "Explainability", 
+        "Understand HOW the best model makes its decisions.", 
+        "Feature importance charts, Confusion Matrix, and Error Analysis.", 
+        "If a feature has 99% importance, check if it's a data leak (e.g. predicting churn using 'churn_date')."
+    )
     
+    model = st.session_state["best_model"]
+    X_test = st.session_state["X_test"]
+    y_test = st.session_state["y_test"]
+    task_type = st.session_state["task_type"]
     fi = st.session_state["feature_importances"]
-    if fi is not None and not fi.empty:
-        fig = px.bar(fi.head(15).sort_values("importance", ascending=True), 
-                     x="importance", y="feature", orientation='h', 
-                     title="Top 15 Most Important Features")
-        st.plotly_chart(fig, use_container_width=True)
+    
+    st.markdown(f"### Best Model: `{st.session_state['leaderboard']['best_model']}`")
+    
+    tab1, tab2, tab3 = st.tabs(["Feature Importance", "Advanced Charts", "Error Analysis"])
+    
+    with tab1:
+        if fi is not None and not fi.empty:
+            fig = px.bar(fi.head(15).sort_values("importance", ascending=True), 
+                         x="importance", y="feature", orientation='h', 
+                         title="Top 15 Most Important Features")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            top_feature = fi.iloc[0]['feature']
+            st.success(f"**Business Meaning:** `{top_feature}` is the strongest driver for predicting `{st.session_state['target_col']}`. Focus your strategy around optimizing this metric.")
+        else:
+            st.info("Global feature importance not available for this model type.")
+            
+    with tab2:
+        if task_type == "Classification":
+            col1, col2 = st.columns(2)
+            try:
+                preds = model.predict(X_test)
+                probas = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
+                
+                with col1:
+                    cm_fig = plot_confusion_matrix(y_test, preds)
+                    st.plotly_chart(cm_fig, use_container_width=True)
+                
+                with col2:
+                    if probas is not None:
+                        roc_fig = plot_roc_curve(y_test, probas)
+                        if roc_fig:
+                            st.plotly_chart(roc_fig, use_container_width=True)
+                        else:
+                            st.info("ROC Curve only supports binary classification.")
+                    else:
+                        st.info("Model does not output probabilities (ROC disabled).")
+            except Exception as e:
+                st.warning(f"Could not generate advanced charts: {e}")
+        else:
+            st.info("Advanced charts (Confusion Matrix, ROC) are for Classification tasks only.")
+            
+    with tab3:
+        with st.spinner("Analyzing model errors..."):
+            err_summary, top_errors = error_analysis(model, X_test, y_test, task_type)
+            st.write(err_summary)
+            if not top_errors.empty:
+                st.dataframe(top_errors.head(10))
         
-        top_feature = fi.iloc[0]['feature']
-        st.success(f"**Business Meaning:** `{top_feature}` is the strongest driver for predicting `{st.session_state['target_col']}`. Focus your strategy around optimizing this metric.")
-    else:
-        st.info("Global feature importance not available for this model type.")
-        
-    st.markdown("### Error Analysis")
-    with st.spinner("Analyzing model errors..."):
-        err_summary, top_errors = error_analysis(
-            st.session_state["best_model"], 
-            st.session_state["X_test"], 
-            st.session_state["y_test"], 
-            st.session_state["task_type"]
-        )
-        st.write(err_summary)
-        
-    if st.button("Continue to Predictions"):
+    if st.button("Continue to Predictions", type="primary"):
         next_step()
         st.rerun()
 
 # --- Step 8: Predictions ---
 def step_predict():
     st.title("🔮 Step 8: Batch Predictions")
-    st.markdown("Upload a new dataset (without the target column) to generate predictions.")
+    show_onboarding(
+        "Predictions", 
+        "Use the trained model to predict outcomes on new, unseen data.", 
+        "A downloadable CSV with your original data plus a new Prediction column.", 
+        "Ensure the new CSV has the exact same columns as the training data (minus the target)."
+    )
     
+    st.markdown("Upload a new dataset (without the target column) to generate predictions.")
     pred_file = st.file_uploader("Upload New Dataset", type=['csv', 'xlsx'], key="pred_file")
     
     if pred_file:
         try:
             is_csv = pred_file.name.endswith('.csv')
             new_df = load_data(pred_file, is_csv)
-            st.write(f"Loaded {new_df.shape[0]} rows.")
+            st.write(f"Loaded {new_df.shape[0]:,} rows.")
             
-            # Validate schema
             missing_cols = [c for c in st.session_state["X_train"].columns if c not in new_df.columns]
             if missing_cols:
-                st.error(f"Missing required columns from training schema: {missing_cols}")
+                st.error(f"Schema Mismatch! Missing required columns from training schema: {missing_cols}")
             else:
                 if st.button("Generate Predictions"):
                     with st.spinner("Predicting..."):
                         preds = st.session_state["best_model"].predict(new_df)
                         new_df["Predicted_" + st.session_state["target_col"]] = preds
+                        
+                        if hasattr(st.session_state["best_model"], "predict_proba"):
+                            probas = st.session_state["best_model"].predict_proba(new_df)
+                            new_df["Confidence_Score"] = np.max(probas, axis=1)
+                            
                         st.success("Predictions Generated successfully!")
                         st.dataframe(new_df.head(10))
                         
@@ -501,25 +613,57 @@ def step_predict():
             st.error(f"Error predicting: {e}")
             
     st.write("---")
-    if st.button("Continue to Final Report"):
+    if st.button("Continue to Final Report", type="primary"):
         next_step()
         st.rerun()
 
 # --- Step 9: Reports & Downloads ---
 def step_report():
     st.title("📥 Step 9: Final Report & Downloads")
+    show_onboarding(
+        "Reports", 
+        "Export the final model and summary text for deployment.", 
+        "A downloadable `.pkl` file and summary report.", 
+        "The PKL file contains the full Scikit-Learn Pipeline (preprocessing + model) and can be loaded via `joblib.load()`."
+    )
+    
     st.success("🎉 You have successfully completed the end-to-end Machine Learning Lifecycle!")
     
     st.markdown("Download your trained artifacts for production deployment.")
     
+    # Best Model PKL
     buffer = io.BytesIO()
     joblib.dump(st.session_state["best_model"], buffer)
     st.download_button(
-        label="Download Best Model Pipeline (.pkl)",
+        label="⬇️ Download Best Model Pipeline (.pkl)",
         data=buffer.getvalue(),
         file_name="best_model_pipeline.pkl",
         mime="application/octet-stream",
         type="primary"
+    )
+    
+    # Summary Report Generation
+    report_text = f"""=================================
+MACHINE LEARNING WORKBENCH REPORT
+=================================
+Task Type: {st.session_state['task_type']}
+Target Variable: {st.session_state['target_col']}
+
+MODEL LEADERBOARD:
+{st.session_state['comparison_df'].to_string(index=False)}
+
+BEST MODEL PIPELINE:
+{st.session_state['leaderboard']['best_model']}
+
+FEATURES ANALYZED: {st.session_state['X_train'].shape[1]}
+TRAINING SAMPLES: {st.session_state['X_train'].shape[0]}
+================================="""
+    
+    st.download_button(
+        label="📄 Download Summary Report (.txt)",
+        data=report_text,
+        file_name="ml_summary_report.txt",
+        mime="text/plain"
     )
     
     if st.button("Reset Entire Pipeline"):
@@ -529,31 +673,43 @@ def step_report():
 
 # --- Main Application Router ---
 def main():
-    inject_custom_css()
-    init_state()
-    
-    # Sidebar
-    st.sidebar.title("Workflow Progress")
-    current = st.session_state["current_step"]
-    
-    for step_num, step_name in STEPS.items():
-        if step_num < current:
-            st.sidebar.success(f"✓ {step_name}")
-        elif step_num == current:
-            st.sidebar.info(f"▶ **{step_name}**")
-        else:
-            st.sidebar.markdown(f"<span style='color: #94A3B8;'>{step_name}</span>", unsafe_allow_html=True)
-            
-    # Routing
-    if current == 1: step_upload()
-    elif current == 2: step_validate()
-    elif current == 3: step_explore()
-    elif current == 4: step_sql()
-    elif current == 5: step_train()
-    elif current == 6: step_compare()
-    elif current == 7: step_explain()
-    elif current == 8: step_predict()
-    elif current == 9: step_report()
+    try:
+        inject_custom_css()
+        init_state()
+        
+        # Sidebar
+        st.sidebar.title("Workflow Progress")
+        current = st.session_state["current_step"]
+        
+        for step_num, step_name in STEPS.items():
+            if step_num < current:
+                st.sidebar.markdown(f"<span style='color: #10B981; font-weight: 600;'>✓ Step {step_num}: {step_name}</span>", unsafe_allow_html=True)
+            elif step_num == current:
+                st.sidebar.markdown(f"<span style='color: #3B82F6; font-weight: 700;'>▶ Step {step_num}: {step_name}</span>", unsafe_allow_html=True)
+            else:
+                st.sidebar.markdown(f"<span style='color: #94A3B8;'>🔒 Step {step_num}: {step_name}</span>", unsafe_allow_html=True)
+                
+        st.sidebar.markdown("---")
+        if current > 1:
+            if st.sidebar.button("⬅️ Previous Step"):
+                prev_step()
+                st.rerun()
+                
+        # Routing
+        if current == 1: step_upload()
+        elif current == 2: step_validate()
+        elif current == 3: step_explore()
+        elif current == 4: step_sql()
+        elif current == 5: step_train()
+        elif current == 6: step_compare()
+        elif current == 7: step_explain()
+        elif current == 8: step_predict()
+        elif current == 9: step_report()
+        
+    except Exception as e:
+        st.error("⚠️ An unexpected error occurred in the application.")
+        st.info(f"Technical Details: {str(e)}")
+        st.warning("Please try refreshing the page or navigating to the previous step.")
     
 if __name__ == "__main__":
     main()
