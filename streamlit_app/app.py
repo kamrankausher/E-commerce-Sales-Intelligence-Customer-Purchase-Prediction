@@ -442,10 +442,7 @@ def step_train():
             st.session_state.update({"X_train": X_train, "X_test": X_test, "y_train": y_train, "y_test": y_test})
             
             feature_dict = detect_features(X_train, target_col="")
-            num_features = feature_dict["numeric"]
-            cat_features = feature_dict["categorical"]
-            bool_features = feature_dict["boolean"]
-            preprocessor = build_preprocessor(num_features, cat_features, bool_features)
+            preprocessor = build_preprocessor(feature_dict)
             st.session_state["preprocessor"] = preprocessor
             
             # 3. Train
