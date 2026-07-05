@@ -126,16 +126,16 @@ def generate_plain_english_explanation(prediction, feature_importances: pd.DataF
     Generate a simple, plain-English explanation of why the prediction was made.
     """
     if feature_importances.empty:
-        return f"The model predicted {prediction} based on the overall data patterns."
+        return f"The model predicted '{prediction}' based on the overall data patterns."
         
     top_features = feature_importances.head(3)["feature"].tolist()
     
-    explanation = f"The model predicted {'Churn' if prediction == 1 else 'Active'} primarily because of these factors:\n"
+    explanation = f"The model predicted '{prediction}' primarily because of these factors:\n"
     for feature in top_features:
         val = X_instance.get(feature, "Unknown")
-        explanation += f"- The customer's {feature} is {val}.\n"
+        explanation += f"- The feature '{feature}' is {val}.\n"
         
-    explanation += "\nThese features historically have the highest impact on customer behavior in our dataset."
+    explanation += "\nThese features historically have the highest impact on this outcome."
     return explanation
 
 def error_analysis(model, X_test, y_test, task_type="Classification"):
@@ -152,8 +152,7 @@ def error_analysis(model, X_test, y_test, task_type="Classification"):
     
     if task_type == "Classification":
         df["Error_Type"] = "Correct"
-        df.loc[(df["Actual"] == 1) & (df["Predicted"] == 0), "Error_Type"] = "False Negative (Missed Churn)"
-        df.loc[(df["Actual"] == 0) & (df["Predicted"] == 1), "Error_Type"] = "False Positive (False Alarm)"
+        df.loc[df["Actual"] != df["Predicted"], "Error_Type"] = "Incorrect Prediction"
         
         counts = df["Error_Type"].value_counts().to_dict()
         return counts, df[df["Error_Type"] != "Correct"].head(5)
