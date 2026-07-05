@@ -26,6 +26,7 @@ MODELS COMPARED:
 """
 
 import os
+import time
 import numpy as np
 import pandas as pd
 import joblib
@@ -34,11 +35,14 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
-from lightgbm import LGBMClassifier
+from xgboost import XGBClassifier, XGBRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, classification_report, confusion_matrix
+    roc_auc_score, mean_squared_error, mean_absolute_error, r2_score
 )
 import config
 
@@ -64,153 +68,130 @@ def split_data(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42)
     return X_train, X_test, y_train, y_test
 
 
-def get_models() -> dict:
+def get_models(task_type: str = "Classification") -> dict:
     """
-    Return a dictionary of model instances to compare.
-
-    Why these models:
-    - LogisticRegression: Linear baseline — always start simple
-    - DecisionTree: Non-linear, easy to visualize, shows overfitting risk
-    - RandomForest: Ensemble of trees — reduces variance, strong baseline
-    - XGBoost: Gradient boosting — state-of-the-art for tabular data
-    - LightGBM: Faster boosting with comparable accuracy
+    Return a dictionary of model instances based on task_type.
     """
-    return {
-        "Logistic Regression": LogisticRegression(
-            max_iter=1000, random_state=42, class_weight="balanced"
-        ),
-        "Decision Tree": DecisionTreeClassifier(
-            max_depth=5, random_state=42, class_weight="balanced"
-        ),
-        "Random Forest": RandomForestClassifier(
-            n_estimators=100, max_depth=10, random_state=42,
-            class_weight="balanced", n_jobs=-1
-        ),
-        "XGBoost": XGBClassifier(
-            n_estimators=100, max_depth=6, learning_rate=0.1,
-            random_state=42, eval_metric="logloss",
-            scale_pos_weight=1, use_label_encoder=False
-        ),
-        "LightGBM": LGBMClassifier(
-            n_estimators=100, max_depth=8, learning_rate=0.1,
-            random_state=42, class_weight="balanced", verbose=-1
-        ),
-    }
+    if task_type == "Classification":
+        return {
+            "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42, class_weight="balanced"),
+            "Decision Tree": DecisionTreeClassifier(max_depth=5, random_state=42, class_weight="balanced"),
+            "Random Forest": RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, class_weight="balanced", n_jobs=-1),
+            "XGBoost": XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1, random_state=42, eval_metric="logloss", scale_pos_weight=1),
+            "LightGBM": LGBMClassifier(n_estimators=100, max_depth=8, learning_rate=0.1, random_state=42, class_weight="balanced", verbose=-1),
+        }
+    else:
+        return {
+            "Linear Regression": LinearRegression(),
+            "Decision Tree": DecisionTreeRegressor(max_depth=5, random_state=42),
+            "Random Forest": RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1),
+            "XGBoost": XGBRegressor(n_estimators=100, max_depth=6, learning_rate=0.1, random_state=42),
+            "LightGBM": LGBMRegressor(n_estimators=100, max_depth=8, learning_rate=0.1, random_state=42, verbose=-1),
+        }
 
 
-def evaluate_model(model, X_test, y_test) -> dict:
-    """
-    Evaluate a trained model on the test set.
-
-    Metrics:
-    - Accuracy:  Overall correctness (can be misleading with imbalance)
-    - Precision: Of predicted churners, how many actually churned?
-    - Recall:    Of actual churners, how many did we catch?
-    - F1-Score:  Harmonic mean of Precision and Recall
-    - ROC-AUC:   Model's ability to rank churners higher than non-churners
-    """
+def evaluate_model(model, X_test, y_test, task_type: str = "Classification") -> dict:
+    """Evaluate a trained model on the test set."""
     y_pred = model.predict(X_test)
-    y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else y_pred
+    
+    if task_type == "Classification":
+        y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else y_pred
+        return {
+            "accuracy":  round(accuracy_score(y_test, y_pred), 4),
+            "precision": round(precision_score(y_test, y_pred, zero_division=0, average='weighted'), 4),
+            "recall":    round(recall_score(y_test, y_pred, zero_division=0, average='weighted'), 4),
+            "f1_score":  round(f1_score(y_test, y_pred, zero_division=0, average='weighted'), 4),
+            "roc_auc":   round(roc_auc_score(y_test, y_proba), 4) if len(np.unique(y_test)) == 2 else np.nan,
+        }
+    else:
+        return {
+            "rmse": round(np.sqrt(mean_squared_error(y_test, y_pred)), 4),
+            "mae":  round(mean_absolute_error(y_test, y_pred), 4),
+            "r2":   round(r2_score(y_test, y_pred), 4),
+        }
 
-    return {
-        "accuracy":  round(accuracy_score(y_test, y_pred), 4),
-        "precision": round(precision_score(y_test, y_pred, zero_division=0), 4),
-        "recall":    round(recall_score(y_test, y_pred, zero_division=0), 4),
-        "f1_score":  round(f1_score(y_test, y_pred, zero_division=0), 4),
-        "roc_auc":   round(roc_auc_score(y_test, y_proba), 4),
-    }
-
-
-def train_and_compare(X_train, X_test, y_train, y_test) -> pd.DataFrame:
-    """
-    Train all models, evaluate on test set, return comparison table.
-
-    Returns:
-        pd.DataFrame — one row per model with all metrics, sorted by ROC-AUC
-    """
-    models = get_models()
+def train_and_compare(X_train, X_test, y_train, y_test, task_type="Classification") -> pd.DataFrame:
+    """Train all models, evaluate on test set, return comparison table."""
+    models = get_models(task_type)
     results = []
 
-    # Scale features for Logistic Regression
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
     for name, model in models.items():
         logger.info(f"  Training {name}...")
-
-        # Use scaled data for Logistic Regression, raw for tree-based models
-        if name == "Logistic Regression":
+        
+        t_start = time.time()
+        if name in ["Logistic Regression", "Linear Regression"]:
             model.fit(X_train_scaled, y_train)
-            metrics = evaluate_model(model, X_test_scaled, y_test)
+            train_time = time.time() - t_start
+            
+            t_inf = time.time()
+            metrics = evaluate_model(model, X_test_scaled, y_test, task_type)
+            inf_time = time.time() - t_inf
         else:
             model.fit(X_train, y_train)
-            metrics = evaluate_model(model, X_test, y_test)
+            train_time = time.time() - t_start
+            
+            t_inf = time.time()
+            metrics = evaluate_model(model, X_test, y_test, task_type)
+            inf_time = time.time() - t_inf
 
         metrics["model"] = name
+        metrics["training_time_sec"] = train_time
+        metrics["inference_time_sec"] = inf_time
         results.append(metrics)
-        logger.info(f"    ROC-AUC: {metrics['roc_auc']:.4f} | F1: {metrics['f1_score']:.4f}")
+        if task_type == "Classification":
+            logger.info(f"    ROC-AUC: {metrics.get('roc_auc')} | F1: {metrics.get('f1_score')}")
+        else:
+            logger.info(f"    RMSE: {metrics.get('rmse')} | R2: {metrics.get('r2')}")
 
     comparison = pd.DataFrame(results)
-    comparison = comparison[["model", "accuracy", "precision", "recall", "f1_score", "roc_auc"]]
-    comparison = comparison.sort_values("roc_auc", ascending=False).reset_index(drop=True)
+    
+    if task_type == "Classification":
+        comparison = comparison[["model", "accuracy", "precision", "recall", "f1_score", "roc_auc", "training_time_sec", "inference_time_sec"]]
+        comparison = comparison.sort_values("roc_auc", ascending=False).reset_index(drop=True)
+    else:
+        comparison = comparison[["model", "rmse", "mae", "r2", "training_time_sec", "inference_time_sec"]]
+        comparison = comparison.sort_values("rmse", ascending=True).reset_index(drop=True)
 
     print("\n" + "=" * 70)
-    logger.info("  MODEL COMPARISON (sorted by ROC-AUC)")
+    logger.info(f"  MODEL COMPARISON ({task_type})")
     print("=" * 70)
     print(comparison.to_string(index=False))
 
     return comparison
 
 
-def tune_best_model(X_train, y_train, preprocessor, model_name: str = "XGBoost", n_iter: int = 30):
-    """
-    Hyperparameter tuning with RandomizedSearchCV.
-
-    Why RandomizedSearchCV over GridSearchCV:
-    - GridSearch tests every combination — exponentially expensive
-    - RandomSearch samples randomly — finds good params faster
-    - Research shows Random is often as effective as Grid with fewer iterations
-
-    Why not Optuna:
-    - Optuna is more sophisticated (Bayesian optimization)
-    - But harder to explain in a fresher interview
-    - RandomizedSearchCV is well-known, in scikit-learn, easy to discuss
-    """
+def tune_best_model(X_train, y_train, preprocessor, model_name: str = "XGBoost", n_iter: int = 30, task_type="Classification"):
+    """Hyperparameter tuning with RandomizedSearchCV."""
     from sklearn.pipeline import Pipeline
+    from sklearn.model_selection import KFold
     
+    # Simple param grids
     param_distributions = {
         "XGBoost": {
-            "classifier__n_estimators": [50, 100, 200, 300],
-            "classifier__max_depth": [3, 4, 5, 6, 8, 10],
-            "classifier__learning_rate": [0.01, 0.05, 0.1, 0.2],
-            "classifier__subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
-            "classifier__colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
-            "classifier__min_child_weight": [1, 3, 5, 7],
-            "classifier__gamma": [0, 0.1, 0.2, 0.3],
+            "classifier__n_estimators": [50, 100, 200],
+            "classifier__max_depth": [3, 5, 8],
+            "classifier__learning_rate": [0.01, 0.1, 0.2],
         },
         "LightGBM": {
-            "classifier__n_estimators": [50, 100, 200, 300],
-            "classifier__max_depth": [3, 5, 8, 10, -1],
-            "classifier__learning_rate": [0.01, 0.05, 0.1, 0.2],
-            "classifier__num_leaves": [15, 31, 63, 127],
-            "classifier__subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
-            "classifier__colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
+            "classifier__n_estimators": [50, 100, 200],
+            "classifier__max_depth": [3, 5, 8],
+            "classifier__learning_rate": [0.01, 0.1, 0.2],
         },
         "Random Forest": {
-            "classifier__n_estimators": [50, 100, 200, 300],
-            "classifier__max_depth": [5, 8, 10, 15, None],
-            "classifier__min_samples_split": [2, 5, 10],
-            "classifier__min_samples_leaf": [1, 2, 4],
-            "classifier__max_features": ["sqrt", "log2"],
+            "classifier__n_estimators": [50, 100, 200],
+            "classifier__max_depth": [5, 10, None],
         },
     }
 
     if model_name not in param_distributions:
         logger.info(f"  ⚠ No tuning config for '{model_name}'. Using default params.")
-        return Pipeline([('preprocessor', preprocessor), ('classifier', get_models()[model_name])])
+        return Pipeline([('preprocessor', preprocessor), ('classifier', get_models(task_type)[model_name])])
 
-    base_models = get_models()
+    base_models = get_models(task_type)
     model = base_models[model_name]
     
     pipeline = Pipeline([
@@ -219,20 +200,28 @@ def tune_best_model(X_train, y_train, preprocessor, model_name: str = "XGBoost",
     ])
 
     logger.info(f"  Tuning {model_name} with RandomizedSearchCV ({n_iter} iterations)...")
+    
+    if task_type == "Classification":
+        cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+        scoring = "roc_auc"
+    else:
+        cv = KFold(n_splits=3, shuffle=True, random_state=42)
+        scoring = "neg_mean_squared_error"
 
     search = RandomizedSearchCV(
         pipeline,
         param_distributions[model_name],
         n_iter=n_iter,
-        cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
-        scoring="roc_auc",
+        cv=cv,
+        scoring=scoring,
         random_state=42,
         n_jobs=-1,
         verbose=0,
     )
     search.fit(X_train, y_train)
 
-    logger.info(f"  [OK] Best ROC-AUC (CV): {search.best_score_:.4f}")
+    best_score = search.best_score_ if task_type == "Classification" else -search.best_score_
+    logger.info(f"  [OK] Best Score (CV): {best_score:.4f}")
     logger.info(f"  [OK] Best params: {search.best_params_}")
 
     return search.best_estimator_

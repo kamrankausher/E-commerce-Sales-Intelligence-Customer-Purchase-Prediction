@@ -17,5 +17,5 @@ COPY . .
 # Expose Streamlit port
 EXPOSE 8501
 
-# Run data generation and dashboard
-CMD ["sh", "-c", "python setup.py && streamlit run streamlit_app/app.py --server.address=0.0.0.0"]
+# Run Streamlit dashboard
+CMD ["streamlit", "run", "streamlit_app/app.py", "--server.address=0.0.0.0"]

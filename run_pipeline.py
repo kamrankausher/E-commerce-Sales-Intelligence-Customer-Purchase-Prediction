@@ -20,8 +20,13 @@ from src.preprocessing.clean_orchestrator import build_master_dataset
 from src.preprocessing.detector import detect_features
 from src.preprocessing.pipeline import build_preprocessor
 from src.features.engine import prepare_ml_dataset
-from src.models.trainer import split_data, get_models, save_model
-from src.evaluation.metrics import save_metrics, extract_dataset_metrics
+from src.models.trainer import split_data, get_models, save_model, train_and_compare, tune_best_model
+from src.models.task_detector import detect_task_type
+from src.evaluation.metrics import save_metrics, extract_dataset_metrics, generate_leaderboard
+from src.evaluation.explainability import (
+    get_feature_importance, get_permutation_importance,
+    generate_shap_explanations, generate_plain_english_explanation, error_analysis
+)
 
 def main():
     logger.info("=== Starting Data Science Pipeline (Phase 5 Architecture) ===")
@@ -76,66 +81,75 @@ def main():
     joblib.dump(preprocessor, preprocessing_path)
     logger.info(f"Saved preprocessing pipeline to {preprocessing_path}")
     
-    # 11. Model Training & Evaluation
-    models = get_models()
+    # 11. Automatic Task Detection
+    task_type = detect_task_type(y)
     
-    best_auc = 0
-    best_model_name = ""
-    best_model = None
+    # 12. Model Comparison
+    comparison_df = train_and_compare(X_train, X_test, y_train, y_test, task_type=task_type)
     
-    if os.path.exists(config.MODEL_RESULTS_FILE):
-        os.remove(config.MODEL_RESULTS_FILE)
+    # Save the results of the model comparison
+    results_list = comparison_df.to_dict(orient="records")
+    leaderboard = generate_leaderboard(results_list, task_type=task_type)
+    best_model_name = leaderboard["best_model"]
     
-    for name, clf in models.items():
-        logger.info(f"Training {name}...")
-        
-        # Bundle preprocessing and modeling
-        model_pipeline = Pipeline(steps=[
-            ('preprocessor', preprocessor),
-            ('classifier', clf)
-        ])
-        
-        t_start = time.time()
-        model_pipeline.fit(X_train, y_train)
-        train_time = time.time() - t_start
-        
-        t_inf = time.time()
-        y_pred = model_pipeline.predict(X_test)
-        y_prob = model_pipeline.predict_proba(X_test)[:, 1]
-        inference_time = time.time() - t_inf
-        
-        auc = roc_auc_score(y_test, y_prob)
-        
-        if auc > best_auc:
-            best_auc = auc
-            best_model_name = name
-            best_model = model_pipeline
-            
-        metrics = {
-            "model": name,
-            "accuracy": accuracy_score(y_test, y_pred),
-            "precision": precision_score(y_test, y_pred, zero_division=0),
-            "recall": recall_score(y_test, y_pred, zero_division=0),
-            "f1_score": f1_score(y_test, y_pred, zero_division=0),
-            "roc_auc": auc,
-            "training_time_sec": train_time,
-            "inference_time_sec": inference_time,
-            **dataset_metrics
-        }
-        
-        save_metrics(metrics)
-        
-    logger.info(f"Best base model found: {best_model_name} with AUC = {best_auc:.4f}")
+    logger.info(f"Leaderboard best model: {best_model_name}")
     
-    # 12. Hyperparameter Tuning
-    if best_model_name in ["XGBoost", "LightGBM", "Random Forest"]:
-        logger.info(f"Tuning {best_model_name} with RandomizedSearchCV...")
-        from src.models.trainer import tune_best_model
-        best_model = tune_best_model(X_train, y_train, preprocessor=preprocessor, model_name=best_model_name, n_iter=10)
+    # 13. Hyperparameter Tuning on Best Model
+    logger.info(f"Tuning {best_model_name} with RandomizedSearchCV...")
+    best_model = tune_best_model(X_train, y_train, preprocessor=preprocessor, model_name=best_model_name, n_iter=10, task_type=task_type)
     
-    # 13. Save Best Complete Pipeline
+    # 14. Explainability & Feature Importance
+    try:
+        feature_names_out = preprocessor.get_feature_names_out()
+        feature_names_clean = [f.split("__")[-1] for f in feature_names_out]
+    except Exception:
+        feature_names_clean = X_train.columns.tolist()
+
+    logger.info("Extracting Feature Importance...")
+    fi = get_feature_importance(best_model, feature_names_clean)
+    
+    logger.info("Calculating Permutation Importance...")
+    pi = get_permutation_importance(best_model, X_test, y_test, feature_names_clean, task_type=task_type)
+    
+    logger.info("Generating SHAP Explanations...")
+    shap_summary, shap_bar = generate_shap_explanations(best_model, X_test, output_dir=config.REPORTS_DIR)
+    
+    logger.info("Performing Error Analysis...")
+    error_summary, top_errors = error_analysis(best_model, X_test, y_test, task_type=task_type)
+    
+    # 15. Plain-English Prediction Example
+    sample_instance = X_test.iloc[0]
+    sample_prediction = best_model.predict(X_test.iloc[[0]])[0]
+    plain_english = generate_plain_english_explanation(sample_prediction, fi, sample_instance)
+    logger.info(f"Sample Explanation: {plain_english}")
+
+    # 16. Save Best Complete Pipeline
     save_model(best_model, filename="best_model.pkl")
     logger.info(f"Saved best complete pipeline to {config.BEST_MODEL_FILE}")
+    
+    # 17. Generate Phase 6 Modeling Report
+    logger.info("Generating Phase 6 Modeling Report...")
+    report_path = os.path.join(config.REPORTS_DIR, "Phase6_Modeling_Report.md")
+    with open(report_path, "w") as f:
+        f.write("# Phase 6: Model Training & Evaluation Report\n\n")
+        f.write(f"## 1. Detected ML Task Type\n- **Task Type**: {task_type}\n\n")
+        f.write("## 2. Model Leaderboard\n")
+        f.write(comparison_df.to_markdown(index=False))
+        f.write(f"\n\n- **Best Model**: {leaderboard['best_model']}\n")
+        f.write(f"- **Fastest Inference**: {leaderboard['fastest_model']}\n")
+        f.write(f"- **Most Interpretable**: {leaderboard['most_interpretable']}\n\n")
+        f.write("## 3. Feature Importance\n")
+        if not fi.empty:
+            f.write(fi.head(10).to_markdown(index=False))
+        f.write("\n\n## 4. Permutation Importance\n")
+        f.write(pi.head(10).to_markdown(index=False))
+        f.write("\n\n## 5. Error Analysis\n")
+        f.write(f"Summary: {error_summary}\n\n")
+        f.write("## 6. Plain-English Explanation Example\n")
+        f.write(f"```text\n{plain_english}\n```\n")
+        if shap_summary:
+            f.write("\n## 7. SHAP Explanations\n")
+            f.write("![SHAP Summary](images/shap_summary.png)\n")
     
     logger.info("=== Pipeline Complete ===")
 

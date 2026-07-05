@@ -1,270 +1,456 @@
 """
-Streamlit Dashboard for E-commerce Customer Analytics
+Streamlit Machine Learning Workbench
+A dynamic end-to-end ML platform for tabular data.
 """
 import streamlit as st
 import pandas as pd
-import joblib
+import numpy as np
+import io
 import os
-import duckdb
-import matplotlib.pyplot as plt
-import seaborn as sns
-import plotly.express as px
-
-# Adjust system path to import config
 import sys
+import time
+import duckdb
+import plotly.express as px
+import plotly.graph_objects as go
+import joblib
+
+# Adjust path to import src
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config
-from src.visualization.plots import plot_correlation_heatmap
 
-st.set_page_config(page_title="E-commerce Analytics", layout="wide", page_icon="🛒")
+from src.preprocessing.detector import detect_features
+from src.preprocessing.pipeline import build_preprocessor
+from src.models.task_detector import detect_task_type
+from src.models.trainer import split_data, train_and_compare, tune_best_model
+from src.evaluation.metrics import generate_leaderboard
+from src.evaluation.explainability import get_feature_importance, get_permutation_importance, error_analysis
 
-# ─── Load Data ─────────────────────────────────────────────────────────────
-@st.cache_resource
-def load_data():
-    master_clean = pd.read_csv(config.MASTER_CLEANED_FILE)
-    ml_data = pd.read_csv(config.ML_DATASET_FILE)
-    model_results = pd.read_csv(config.MODEL_RESULTS_FILE)
-    model = joblib.load(config.BEST_MODEL_FILE)
-    
-    # Load raw data into DuckDB for SQL Analytics
-    conn = duckdb.connect(database=':memory:')
-    for table_name in ['customers', 'orders', 'order_items', 'products', 'order_payments']:
-        file_path = os.path.join(config.RAW_DATA_DIR, f"olist_{table_name}_dataset.csv")
-        if os.path.exists(file_path):
-            # Clean up the table name for SQL
-            sql_name = table_name.replace("order_", "")
-            if sql_name == "items": sql_name = "items"
-            conn.execute(f"CREATE TABLE {sql_name} AS SELECT * FROM read_csv_auto('{file_path}')")
-    
-    return master_clean, ml_data, model_results, model, conn
+# --- Page Config ---
+st.set_page_config(page_title="ML Workbench", layout="wide", page_icon="⚙️")
 
-try:
-    df_clean, df_ml, df_results, best_model, db_conn = load_data()
-except Exception as e:
-    st.error(f"Error loading data: {e}")
-    st.info("Please run `python run_pipeline.py` first to generate the required datasets and models.")
-    st.stop()
+# --- Session State Initialization ---
+def init_state():
+    defaults = {
+        "raw_df": None,
+        "clean_df": None,
+        "filename": None,
+        "target_col": None,
+        "id_col": None,
+        "task_type": None,
+        "preprocessor": None,
+        "X_train": None, "X_test": None, "y_train": None, "y_test": None,
+        "comparison_df": None,
+        "leaderboard": None,
+        "best_model": None,
+        "feature_importances": None,
+        "db_conn": None
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-# ─── Navigation ────────────────────────────────────────────────────────────
-pages = [
-    "Home", "Dataset Overview", "Data Validation", "Data Cleaning Report", 
-    "EDA", "SQL Insights", "Machine Learning", "Model Comparison", 
-    "Prediction Simulator", "Business Insights", "About"
-]
-page = st.sidebar.radio("Navigate", pages)
+init_state()
 
-# ─── Pages ─────────────────────────────────────────────────────────────────
+# --- Helper Functions ---
+def reset_pipeline_state():
+    """Resets everything downstream of data upload."""
+    st.session_state["target_col"] = None
+    st.session_state["task_type"] = None
+    st.session_state["preprocessor"] = None
+    st.session_state["comparison_df"] = None
+    st.session_state["best_model"] = None
+    st.session_state["feature_importances"] = None
 
-if page == "Home":
-    st.title("🛒 E-commerce Customer Analytics & Churn Prediction")
+# --- UI Pages ---
+
+def render_welcome():
+    st.title("⚙️ Interactive Machine Learning Workbench")
     st.markdown("""
-    Welcome to the E-commerce Growth Intelligence Platform.
+    Welcome to the generic **Machine Learning Workbench**.
     
-    This project demonstrates an end-to-end Data Science pipeline to identify high-risk customers 
-    and provide actionable retention strategies.
+    This application allows you to upload **any structured tabular dataset** (CSV or Excel) and takes you through an entire end-to-end Machine Learning pipeline:
     
-    **Project Goals:**
-    1. Identify customers likely to churn (90-day inactivity).
-    2. Understand churn drivers (Recency, Frequency, Delivery Experience).
-    3. Quantify revenue impact and prioritize retention efforts.
+    1. **Upload Dataset**: Ingest your raw data.
+    2. **Data Profiling**: Automatically inspect schema and statistics.
+    3. **Data Cleaning & EDA**: Visualize distributions and prepare data.
+    4. **SQL Analytics**: Query your uploaded data in real-time.
+    5. **Model Training**: Auto-detect classification or regression and train multiple models.
+    6. **Evaluation & Explainability**: Compare results and explain predictions.
     
-    Use the sidebar to navigate through the different phases of the project, from raw data validation 
-    all the way to the machine learning predictions and business insights.
+    👈 **Get started by going to the 'Upload Dataset' tab in the sidebar.**
     """)
-    st.image("https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=1200&q=80", use_column_width=True)
+    st.info("Ensure your dataset has a clear target variable you want to predict.")
 
-elif page == "Dataset Overview":
-    st.title("📊 Dataset Overview")
-    st.markdown("We are analyzing a relational Brazilian E-commerce dataset containing 8 tables.")
+def render_upload():
+    st.title("📂 Upload Dataset")
+    st.markdown("Upload your tabular dataset to begin. Supported formats: **.csv**, **.xlsx**")
+    
+    uploaded_file = st.file_uploader("Choose a file", type=['csv', 'xlsx'])
+    
+    # FOR TESTING
+    if st.button("Load Sample Dataset (ml_dataset.csv)"):
+        sample_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "processed", "ml_dataset.csv")
+        try:
+            df = pd.read_csv(sample_path)
+            st.session_state["raw_df"] = df.copy()
+            st.session_state["clean_df"] = df.copy()
+            st.session_state["filename"] = "ml_dataset.csv"
+            
+            if st.session_state["db_conn"] is None:
+                st.session_state["db_conn"] = duckdb.connect(database=':memory:')
+            st.session_state["db_conn"].register("dataset", st.session_state["raw_df"])
+            reset_pipeline_state()
+            st.success("Successfully loaded sample dataset!")
+        except Exception as e:
+            st.error(f"Error loading sample: {e}")
+            
+    if uploaded_file is not None:
+        try:
+            with st.spinner("Loading dataset..."):
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                
+            if df.empty:
+                st.error("The uploaded dataset is empty.")
+                return
+                
+            if len(df.columns) < 2:
+                st.error("The dataset must have at least 2 columns (features + target).")
+                return
+                
+            # Basic validation check
+            st.session_state["raw_df"] = df.copy()
+            st.session_state["clean_df"] = df.copy() # Initial state
+            st.session_state["filename"] = uploaded_file.name
+            
+            # Setup DuckDB
+            if st.session_state["db_conn"] is None:
+                st.session_state["db_conn"] = duckdb.connect(database=':memory:')
+            # Register dataframe as a table
+            raw_data = st.session_state["raw_df"]
+            st.session_state["db_conn"].register("dataset", raw_data)
+            
+            st.success(f"Successfully loaded '{uploaded_file.name}' with {df.shape[0]} rows and {df.shape[1]} columns!")
+            reset_pipeline_state()
+            
+            st.dataframe(df.head(10))
+            
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
+def render_profiling():
+    st.title("📊 Data Profiling & Schema")
+    df = st.session_state["raw_df"]
+    
+    if df is None:
+        st.warning("Please upload a dataset first.")
+        return
+        
     col1, col2, col3 = st.columns(3)
-    col1.metric("Customers", "10,000+")
-    col2.metric("Orders", "29,000+")
-    col3.metric("Products", "5,000+")
+    col1.metric("Rows", df.shape[0])
+    col2.metric("Columns", df.shape[1])
+    col3.metric("Missing Cells", df.isna().sum().sum())
     
-    st.subheader("Raw Data Sample (Customers)")
-    st.dataframe(pd.read_csv(os.path.join(config.RAW_DATA_DIR, "olist_customers_dataset.csv")).head())
-
-elif page == "Data Validation":
-    st.title("✅ Data Validation")
-    st.markdown("Before processing, the raw data undergoes schema validation using `pandera`.")
-    report_path = os.path.join(config.REPORTS_DIR, "validation_report.md")
-    if os.path.exists(report_path):
-        with open(report_path, "r") as f:
-            st.markdown(f.read())
+    st.subheader("Schema Validation")
+    buffer = io.StringIO()
+    df.info(buf=buffer)
+    st.text(buffer.getvalue())
+    
+    st.subheader("Statistical Summary")
+    st.dataframe(df.describe(include='all'))
+    
+    st.subheader("Missing Values Heatmap")
+    missing = df.isna().sum()
+    missing = missing[missing > 0]
+    if not missing.empty:
+        fig = px.bar(missing, x=missing.index, y=missing.values, title="Missing Values per Column")
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Validation report not found. Run the pipeline.")
+        st.success("No missing values found in the dataset!")
 
-elif page == "Data Cleaning Report":
-    st.title("🧹 Data Cleaning Report")
-    st.markdown("""
-    **Preprocessing Steps Applied:**
-    - Standardized date columns to `datetime` objects.
-    - Filtered out canceled/unavailable orders (kept only 'delivered').
-    - Imputed missing review scores using the median (ordinal data).
-    - Detected and capped outliers in the `price` column using the IQR method.
-    """)
-    st.subheader("Cleaned Master Dataset")
-    st.dataframe(df_clean.head())
-
-elif page == "EDA":
-    st.title("📈 Exploratory Data Analysis")
-    st.markdown("Dynamic visualization generated from raw data.")
+def render_cleaning_eda():
+    st.title("🧹 Data Cleaning & EDA")
+    df = st.session_state["clean_df"]
     
-    tab1, tab2, tab3 = st.tabs(["Distributions", "Categorical", "Correlations"])
+    if df is None:
+        st.warning("Please upload a dataset first.")
+        return
+
+    st.subheader("Exploratory Data Analysis")
+    num_cols = df.select_dtypes(include=np.number).columns.tolist()
+    cat_cols = df.select_dtypes(exclude=np.number).columns.tolist()
+    
+    tab1, tab2 = st.tabs(["Numerical Features", "Categorical Features"])
+    
     with tab1:
-        st.subheader("Numeric Distributions")
-        for col in ["frequency", "monetary", "recency_days"]:
-            if col in df_ml.columns:
-                fig = px.histogram(df_ml, x=col, title=f"{col.title()} Distribution", nbins=50, color_discrete_sequence=['#6366f1'])
-                st.plotly_chart(fig, use_container_width=True)
-                
-    with tab2:
-        st.subheader("Categorical Trends")
-        top_states = df_clean["customer_state"].value_counts().reset_index().head(10)
-        top_states.columns = ["State", "Count"]
-        st.plotly_chart(px.bar(top_states, x="State", y="Count", title="Top 10 Customer States", color_discrete_sequence=['#6366f1']), use_container_width=True)
-        
-    with tab3:
-        st.subheader("Feature Correlations")
-        features = [col for col in df_ml.columns if col not in [config.ID_COL, config.TARGET_COL]]
-        st.pyplot(plot_correlation_heatmap(df_ml[features + [config.TARGET_COL]]))
-
-elif page == "SQL Insights":
-    st.title("💻 SQL Analytics")
-    st.markdown("Executing live SQL queries on the raw datasets using DuckDB.")
-    
-    sql_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sql")
-    if os.path.exists(sql_dir):
-        queries = [f for f in os.listdir(sql_dir) if f.endswith('.sql')]
-        selected_query = st.selectbox("Select a Business Query", queries)
-        
-        if selected_query:
-            query_name = selected_query.replace(".sql", "").replace("_", " ").title()
-            st.subheader(f"Query: {query_name}")
-            
-            with open(os.path.join(sql_dir, selected_query), "r") as f:
-                sql_text = f.read()
-                
-            st.code(sql_text, language="sql")
-            
-            try:
-                res = db_conn.execute(sql_text).df()
-                st.dataframe(res)
-                
-                # Basic automated charting if applicable
-                if len(res.columns) >= 2:
-                    if "month" in res.columns:
-                        st.plotly_chart(px.line(res, x=res.columns[0], y=res.columns[1], title=query_name), use_container_width=True)
-                    else:
-                        st.plotly_chart(px.bar(res, x=res.columns[0], y=res.columns[-1], title=query_name), use_container_width=True)
-            except Exception as e:
-                st.error(f"SQL execution failed: {e}")
-    else:
-        st.warning("SQL directory not found.")
-
-elif page == "Machine Learning":
-    st.title("🤖 Machine Learning Pipeline")
-    st.markdown("""
-    **Target Definition:** 
-    Customer churned if no purchase in the last 90 days.
-    
-    **Features Engineered:**
-    - **RFM:** Recency, Frequency, Monetary
-    - **Behavioral:** Review count, avg review score, avg days between orders
-    - **Operational:** Late delivery rate, installments
-    
-    **Algorithm Selection:**
-    Evaluated Logistic Regression, Decision Tree, Random Forest, XGBoost, LightGBM.
-    """)
-    st.dataframe(df_ml.head())
-
-elif page == "Model Comparison":
-    st.title("🏆 Model Comparison")
-    st.markdown("Evaluating models based on ROC-AUC, F1-Score, and Processing Time.")
-    st.dataframe(df_results[['model', 'accuracy', 'precision', 'recall', 'f1_score', 'roc_auc', 'training_time_sec']])
-    
-    st.subheader("ROC-AUC Comparison")
-    st.plotly_chart(px.bar(df_results, x='model', y='roc_auc', color='model'))
-
-elif page == "Prediction Simulator":
-    st.title("🔮 Churn Prediction Simulator")
-    st.markdown("Adjust the features below to simulate customer churn probability using the best model.")
-    
-    col1, col2, col3 = st.columns(3)
-    features = {}
-    
-    with col1:
-        features["frequency"] = st.slider("Frequency (Total orders)", 1, 50, 2)
-        features["monetary"] = st.slider("Monetary (Total spend R$)", 10.0, 5000.0, 150.0)
-        features["avg_order_value"] = features["monetary"] / features["frequency"]
-        
-    with col2:
-        features["avg_review_score"] = st.slider("Avg Review Score", 1.0, 5.0, 4.5)
-        features["review_count"] = st.slider("Total Reviews", 0, 50, 1)
-        features["tenure_days"] = st.slider("Tenure (Days since first order)", 1, 730, 300)
-        features["avg_days_between_orders"] = st.slider("Avg Days Between Orders", 0, 365, 30)
-        
-    with col3:
-        features["avg_installments"] = st.slider("Avg Installments", 1, 24, 1)
-        features["payment_type_diversity"] = st.slider("Payment Methods Used", 1, 5, 1)
-        features["late_delivery_rate"] = st.slider("Late Delivery Rate", 0.0, 1.0, 0.0)
-        features["category_diversity"] = st.slider("Categories Bought", 1, 20, 2)
-        
-    if st.button("Predict Churn Risk"):
-        input_df = pd.DataFrame([features])
-        # Ensure order matches training data
-        train_features = [col for col in df_ml.columns if col not in [config.ID_COL, config.TARGET_COL]]
-        input_df = input_df[train_features]
-        
-        prob = best_model.predict_proba(input_df)[0][1]
-        
-        st.subheader("Prediction Result")
-        if prob > 0.5:
-            st.error(f"⚠️ HIGH RISK OF CHURN: {prob:.1%} probability")
-        elif prob > 0.3:
-            st.warning(f"⚖️ MEDIUM RISK: {prob:.1%} probability")
+        if num_cols:
+            selected_num = st.selectbox("Select Numerical Feature", num_cols)
+            fig = px.histogram(df, x=selected_num, nbins=50, title=f"Distribution of {selected_num}")
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.success(f"✅ ACTIVE CUSTOMER: {prob:.1%} probability")
+            st.info("No numerical features found.")
+            
+    with tab2:
+        if cat_cols:
+            selected_cat = st.selectbox("Select Categorical Feature", cat_cols)
+            val_counts = df[selected_cat].value_counts().reset_index()
+            val_counts.columns = [selected_cat, 'Count']
+            # Only show top 20 for readability
+            fig = px.bar(val_counts.head(20), x=selected_cat, y='Count', title=f"Top 20 categories in {selected_cat}")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No categorical features found.")
 
-elif page == "Business Insights":
-    st.title("💡 Business Insights & Impact")
-    st.markdown("Dynamic insights automatically generated from the underlying data.")
-    
-    import sys
-    from src.analytics.queries import execute_all_business_queries
-    from src.visualization.eda import generate_business_insights
-    
-    # Pass Dataframes dynamically from the duckdb connection
-    # Wait, execute_all_business_queries takes dict of DFs, but we already have duckdb connected.
-    # To keep it simple in Streamlit without reloading, we'll just read the pre-generated report!
-    
-    report_path = os.path.join(config.REPORTS_DIR, "Phase4_EDA_Report.md")
-    if os.path.exists(report_path):
-        with open(report_path, "r", encoding="utf-8") as f:
-            st.markdown(f.read())
-    else:
-        st.info("No EDA Report found. Please run `python run_eda.py`.")
+def render_sql():
+    st.title("💻 SQL Analytics")
+    if st.session_state["raw_df"] is None:
+        st.warning("Please upload a dataset first.")
+        return
         
-    st.markdown("---")
-    st.markdown("### Manual Operational Recommendations")
-    st.markdown("""
-    - **The 60-Day Intervention Rule**: Trigger automated retention emails at day 45.
-    - **Operational Impact on Loyalty**: A late delivery increases the probability of churn by ~18%.
-    - **The Second Purchase Hurdle**: Create a "Welcome Series" onboarding campaign.
-    """)
+    st.markdown("Your uploaded data is available as a table named **`dataset`**.")
+    query = st.text_area("Write your SQL query:", value="SELECT * FROM dataset LIMIT 10;", height=150)
+    
+    if st.button("Execute Query"):
+        try:
+            conn = st.session_state["db_conn"]
+            res = conn.execute(query).df()
+            st.success("Query executed successfully!")
+            st.dataframe(res)
+            
+            csv = res.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Results as CSV",
+                data=csv,
+                file_name='query_results.csv',
+                mime='text/csv',
+            )
+        except Exception as e:
+            st.error(f"SQL Error: {str(e)}")
 
-elif page == "About":
-    st.title("ℹ️ About the Project")
-    st.markdown("""
-    This project was built to demonstrate a complete Data Science and Machine Learning workflow.
+def render_training():
+    st.title("🤖 Model Training & Comparison")
+    df = st.session_state["clean_df"]
     
-    **Tools Used:**
-    - **Data Manipulation:** `pandas`, `numpy`
-    - **Validation:** `pandera`
-    - **Machine Learning:** `scikit-learn`, `xgboost`, `lightgbm`
-    - **SQL:** `duckdb`
-    - **Visualization:** `matplotlib`, `seaborn`, `plotly`
-    - **Deployment:** `streamlit`, `docker`
+    if df is None:
+        st.warning("Please upload a dataset first.")
+        return
+        
+    st.subheader("1. Setup Machine Learning Task")
     
-    Created for a Data Science portfolio.
-    """)
+    cols = df.columns.tolist()
+    target = st.selectbox("Select Target Column to Predict:", [None] + cols)
+    id_cols = st.multiselect("Select Columns to Ignore (e.g. IDs):", cols)
+    
+    if target:
+        if st.button("Start Training Pipeline"):
+            with st.spinner("Detecting Task Type..."):
+                y = df[target]
+                task_type = detect_task_type(y)
+                st.session_state["task_type"] = task_type
+                st.session_state["target_col"] = target
+                st.info(f"**Detected Task:** {task_type}")
+                
+            with st.spinner("Preparing Data & Preprocessing..."):
+                # Drop NAs in target
+                df_ml = df.dropna(subset=[target]).copy()
+                X = df_ml.drop(columns=[target] + id_cols)
+                y = df_ml[target]
+                
+                # Split
+                X_train, X_test, y_train, y_test = split_data(X, y)
+                st.session_state["X_train"] = X_train
+                st.session_state["X_test"] = X_test
+                st.session_state["y_train"] = y_train
+                st.session_state["y_test"] = y_test
+                
+                # Detect features and build preprocessor
+                num_features, cat_features, bool_features = detect_features(X_train)
+                preprocessor = build_preprocessor(num_features, cat_features, bool_features)
+                st.session_state["preprocessor"] = preprocessor
+                
+            with st.spinner(f"Training and Evaluating Models ({task_type})..."):
+                comparison_df = train_and_compare(X_train, X_test, y_train, y_test, task_type=task_type)
+                st.session_state["comparison_df"] = comparison_df
+                
+                leaderboard = generate_leaderboard(comparison_df.to_dict(orient="records"), task_type=task_type)
+                st.session_state["leaderboard"] = leaderboard
+                
+            with st.spinner(f"Hyperparameter Tuning the Best Model ({leaderboard['best_model']})..."):
+                best_model = tune_best_model(X_train, y_train, preprocessor, leaderboard['best_model'], n_iter=5, task_type=task_type)
+                st.session_state["best_model"] = best_model
+                
+                # Extract Feature Importance
+                try:
+                    feature_names_out = preprocessor.get_feature_names_out()
+                    feature_names_clean = [f.split("__")[-1] for f in feature_names_out]
+                except Exception:
+                    feature_names_clean = X_train.columns.tolist()
+                
+                fi = get_feature_importance(best_model, feature_names_clean)
+                st.session_state["feature_importances"] = fi
+                
+            st.success("Training Complete! Proceed to the 'Evaluation' tab.")
+            st.rerun()
+
+    if st.session_state["comparison_df"] is not None:
+        st.markdown("---")
+        st.subheader("🏆 Model Leaderboard")
+        comp_df = st.session_state["comparison_df"]
+        st.dataframe(comp_df)
+        
+        lb = st.session_state["leaderboard"]
+        c1, c2, c3 = st.columns(3)
+        c1.success(f"**Best Model**: {lb['best_model']}")
+        c2.info(f"**Fastest Inference**: {lb['fastest_model']}")
+        c3.warning(f"**Most Interpretable**: {lb['most_interpretable']}")
+        
+        metric = "roc_auc" if st.session_state["task_type"] == "Classification" else "rmse"
+        fig = px.bar(comp_df, x="model", y=metric, color="model", title=f"Model Comparison ({metric.upper()})")
+        st.plotly_chart(fig, use_container_width=True)
+
+def render_evaluation():
+    st.title("📊 Detailed Evaluation & Explainability")
+    if st.session_state["best_model"] is None:
+        st.warning("Please train models first.")
+        return
+        
+    st.subheader(f"Best Model: {st.session_state['leaderboard']['best_model']}")
+    
+    fi = st.session_state["feature_importances"]
+    if fi is not None and not fi.empty:
+        st.markdown("### Feature Importance")
+        fig = px.bar(fi.head(15).sort_values("importance", ascending=True), 
+                     x="importance", y="feature", orientation='h', 
+                     title="Top 15 Most Important Features")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Feature importance not available for this model type.")
+        
+    st.markdown("### Error Analysis")
+    with st.spinner("Analyzing errors..."):
+        err_summary, top_errors = error_analysis(
+            st.session_state["best_model"], 
+            st.session_state["X_test"], 
+            st.session_state["y_test"], 
+            st.session_state["task_type"]
+        )
+        st.write(err_summary)
+        st.dataframe(top_errors)
+
+def render_predictions():
+    st.title("🔮 Predictions Simulator")
+    if st.session_state["best_model"] is None:
+        st.warning("Please train models first.")
+        return
+        
+    st.markdown("Adjust features below to generate live predictions using the trained pipeline.")
+    
+    X_train = st.session_state["X_train"]
+    model = st.session_state["best_model"]
+    task_type = st.session_state["task_type"]
+    
+    input_data = {}
+    
+    # Create an expander for input fields to save space
+    with st.expander("Feature Inputs", expanded=True):
+        # We will create 3 columns
+        cols = st.columns(3)
+        for i, col in enumerate(X_train.columns):
+            c = cols[i % 3]
+            dtype = X_train[col].dtype
+            
+            if pd.api.types.is_numeric_dtype(dtype):
+                mean_val = float(X_train[col].mean())
+                min_val = float(X_train[col].min())
+                max_val = float(X_train[col].max())
+                # Handle edge case where min == max
+                if min_val == max_val:
+                    input_data[col] = c.number_input(f"{col}", value=mean_val)
+                else:
+                    input_data[col] = c.slider(f"{col}", min_value=min_val, max_value=max_val, value=mean_val)
+            elif pd.api.types.is_bool_dtype(dtype):
+                input_data[col] = c.selectbox(f"{col}", [True, False])
+            else:
+                unique_vals = X_train[col].dropna().unique().tolist()
+                if not unique_vals:
+                    unique_vals = ["Unknown"]
+                input_data[col] = c.selectbox(f"{col}", unique_vals)
+                
+    if st.button("Predict"):
+        input_df = pd.DataFrame([input_data])
+        try:
+            if task_type == "Classification":
+                prob = model.predict_proba(input_df)[0]
+                pred = model.predict(input_df)[0]
+                st.success(f"**Prediction:** {pred}")
+                st.info(f"**Probabilities:** {dict(enumerate(prob))}")
+            else:
+                pred = model.predict(input_df)[0]
+                st.success(f"**Prediction:** {pred:.4f}")
+                
+            from src.evaluation.explainability import generate_plain_english_explanation
+            explanation = generate_plain_english_explanation(pred, st.session_state["feature_importances"], input_df.iloc[0])
+            st.markdown("### Plain English Explanation")
+            st.info(explanation)
+            
+        except Exception as e:
+            st.error(f"Prediction Error: {e}")
+
+def render_downloads():
+    st.title("📥 Download Center")
+    if st.session_state["best_model"] is None:
+        st.warning("Please complete the pipeline to enable downloads.")
+        return
+        
+    st.markdown("Download your trained artifacts and reports here.")
+    
+    # Best Model
+    buffer = io.BytesIO()
+    joblib.dump(st.session_state["best_model"], buffer)
+    st.download_button(
+        label="Download Best Model Pipeline (.pkl)",
+        data=buffer.getvalue(),
+        file_name="best_model_pipeline.pkl",
+        mime="application/octet-stream"
+    )
+    
+    # Leaderboard CSV
+    csv = st.session_state["comparison_df"].to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Download Leaderboard (.csv)",
+        data=csv,
+        file_name="leaderboard.csv",
+        mime="text/csv"
+    )
+
+# --- Sidebar Navigation ---
+st.sidebar.title("Navigation")
+# Control visibility of pages based on state
+available_pages = ["Welcome", "Upload Dataset"]
+if st.session_state["raw_df"] is not None:
+    available_pages.extend(["Data Profiling & Schema", "Data Cleaning & EDA", "SQL Analytics", "Model Training"])
+if st.session_state["best_model"] is not None:
+    available_pages.extend(["Evaluation & Explainability", "Predictions Simulator", "Download Center"])
+
+page = st.sidebar.radio("Go to:", available_pages)
+
+# --- Router ---
+if page == "Welcome":
+    render_welcome()
+elif page == "Upload Dataset":
+    render_upload()
+elif page == "Data Profiling & Schema":
+    render_profiling()
+elif page == "Data Cleaning & EDA":
+    render_cleaning_eda()
+elif page == "SQL Analytics":
+    render_sql()
+elif page == "Model Training":
+    render_training()
+elif page == "Evaluation & Explainability":
+    render_evaluation()
+elif page == "Predictions Simulator":
+    render_predictions()
+elif page == "Download Center":
+    render_downloads()

@@ -35,8 +35,48 @@ def extract_dataset_metrics(master_raw: pd.DataFrame, master_clean: pd.DataFrame
         "raw_columns": len(master_raw.columns),
         "cleaned_rows": len(master_clean),
         "cleaned_columns": len(master_clean.columns),
-        "missing_values_removed_or_imputed": True, # Boolean flag for simplicity
+        "missing_values_removed_or_imputed": True,
         "duplicates_removed": len(master_raw) - len(master_clean),
-        "features_engineered": len(ml_data.columns) - 2, # Excluding customer_id and target
+        "features_engineered": len(ml_data.columns) - 2,
         "final_samples": len(ml_data)
     }
+
+def generate_leaderboard(results: list, task_type: str = "Classification") -> dict:
+    """
+    Generate a leaderboard from a list of result dictionaries.
+    Identifies Best, Fastest, and Most Interpretable models.
+    """
+    if not results:
+        return {}
+
+    df = pd.DataFrame(results)
+    
+    # Sort
+    if task_type == "Classification":
+        df = df.sort_values("roc_auc", ascending=False)
+        best_metric = "roc_auc"
+    else:
+        df = df.sort_values("rmse", ascending=True)
+        best_metric = "rmse"
+        
+    best_model = df.iloc[0]["model"]
+    
+    # Fastest
+    fastest_model = df.sort_values("inference_time_sec").iloc[0]["model"]
+    
+    # Interpretable
+    interpretable_models = ["Logistic Regression", "Decision Tree", "Linear Regression"]
+    df_interp = df[df["model"].isin(interpretable_models)]
+    if not df_interp.empty:
+        most_interpretable = df_interp.iloc[0]["model"]
+    else:
+        most_interpretable = best_model
+        
+    leaderboard_info = {
+        "best_model": best_model,
+        "fastest_model": fastest_model,
+        "most_interpretable": most_interpretable,
+        "all_results": df.to_dict(orient="records")
+    }
+    
+    return leaderboard_info
