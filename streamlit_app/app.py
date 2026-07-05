@@ -283,6 +283,11 @@ def step_validate():
         reason = "Numeric/Categorical column found at the end of the dataset."
         
     st.info(f"**Recommended Target:** `{recommended_target}`\n\n**Reason:** {reason}")
+    
+    if not potential_targets:
+        st.error("No valid target columns found! All columns appear to be identifiers. Please upload a different dataset.")
+        return
+        
     selected_target = st.selectbox("Confirm Target Column:", potential_targets, index=potential_targets.index(recommended_target) if recommended_target in potential_targets else 0)
     
     st.markdown("### Readiness Report")
@@ -327,15 +332,18 @@ def step_explore():
         if cat_cols:
             selected_cat = st.selectbox("Select Categorical Feature", cat_cols, key="cat")
             val_counts = df[selected_cat].value_counts().reset_index()
-            val_counts.columns = [selected_cat, 'Count']
-            
-            majority_cat = val_counts.iloc[0][selected_cat]
-            majority_pct = (val_counts.iloc[0]['Count'] / len(df)) * 100
-            
-            fig = px.bar(val_counts.head(20), x=selected_cat, y='Count', title=f"Top Categories in {selected_cat}")
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.success(f"**Observation:** `{majority_cat}` is the dominant category, making up **{majority_pct:.1f}%** of the data.\n\n**Business Meaning:** This segment represents your largest demographic or cohort.\n\n**Recommendation:** Ensure sufficient representation of minority classes to prevent model bias.")
+            if not val_counts.empty:
+                val_counts.columns = [selected_cat, 'Count']
+                
+                majority_cat = val_counts.iloc[0][selected_cat]
+                majority_pct = (val_counts.iloc[0]['Count'] / len(df)) * 100
+                
+                fig = px.bar(val_counts.head(20), x=selected_cat, y='Count', title=f"Top Categories in {selected_cat}")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.success(f"**Observation:** `{majority_cat}` is the dominant category, making up **{majority_pct:.1f}%** of the data.\n\n**Business Meaning:** This segment represents your largest demographic or cohort.\n\n**Recommendation:** Ensure sufficient representation of minority classes to prevent model bias.")
+            else:
+                st.info(f"No valid data found in `{selected_cat}`.")
 
     st.write("")
     if st.button("Continue to SQL Analytics", type="primary"):
@@ -360,11 +368,12 @@ def step_sql():
     
     selected_template = st.selectbox("Quick Analysis Templates", list(templates.keys()))
     
-    with st.expander("Advanced SQL Editor", expanded=False):
-        query = st.text_area("Write custom SQL (table is named 'dataset')", value=templates[selected_template], height=120)
+    if "last_template" not in st.session_state or st.session_state["last_template"] != selected_template:
+        st.session_state["sql_query"] = templates[selected_template]
+        st.session_state["last_template"] = selected_template
     
-    if "Advanced SQL Editor" not in st.session_state:
-        query = templates[selected_template]
+    with st.expander("Advanced SQL Editor", expanded=False):
+        query = st.text_area("Write custom SQL (table is named 'dataset')", key="sql_query", height=120)
         
     if st.button("Execute Query"):
         try:
@@ -493,7 +502,8 @@ def step_compare():
     c3.markdown(f"<div class='metric-card'><div class='metric-title'>Most Interpretable</div><div class='metric-value' style='color:#f59e0b'>{lb['most_interpretable']}</div></div>", unsafe_allow_html=True)
     
     st.write("")
-    st.dataframe(comp_df.style.highlight_max(axis=0, subset=['accuracy', 'roc_auc', 'f1_score'] if st.session_state['task_type']=='Classification' else []), use_container_width=True)
+    highlight_cols = [c for c in ['accuracy', 'roc_auc', 'f1_score'] if c in comp_df.columns and comp_df[c].notna().any()]
+    st.dataframe(comp_df.style.highlight_max(axis=0, subset=highlight_cols if st.session_state['task_type']=='Classification' else []), use_container_width=True)
     
     metric = "roc_auc" if st.session_state["task_type"] == "Classification" else "rmse"
     if metric in comp_df.columns:
@@ -548,12 +558,14 @@ def step_explain():
                     st.plotly_chart(cm_fig, use_container_width=True)
                 
                 with col2:
-                    if probas is not None:
+                    if probas is not None and len(np.unique(y_test)) == 2:
                         roc_fig = plot_roc_curve(y_test, probas)
                         if roc_fig:
                             st.plotly_chart(roc_fig, use_container_width=True)
                         else:
                             st.info("ROC Curve only supports binary classification.")
+                    elif len(np.unique(y_test)) > 2:
+                        st.info("ROC Curve is optimized for binary classification (multi-class detected).")
                     else:
                         st.info("Model does not output probabilities (ROC disabled).")
             except Exception as e:
@@ -595,6 +607,11 @@ def step_predict():
             if missing_cols:
                 st.error(f"Schema Mismatch! Missing required columns from training schema: {missing_cols}")
             else:
+                # Drop ignored columns to prevent preprocessing errors
+                for col in st.session_state["ignored_cols"]:
+                    if col in new_df.columns:
+                        new_df = new_df.drop(columns=[col])
+                        
                 if st.button("Generate Predictions"):
                     with st.spinner("Predicting..."):
                         preds = st.session_state["best_model"].predict(new_df)
