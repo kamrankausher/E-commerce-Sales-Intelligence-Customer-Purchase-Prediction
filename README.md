@@ -16,7 +16,7 @@ Launch the interactive Streamlit Workbench locally:
 ```bash
 python -m streamlit run streamlit_app/app.py
 ```
-*(Or deploy directly to Streamlit Community Cloud using the provided `Dockerfile`/`requirements.txt`)*
+
 
 ---
 
